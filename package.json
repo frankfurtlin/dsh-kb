@@ -1,0 +1,42 @@
+{
+  "name": "dsh-kb",
+  "version": "0.2.1",
+  "private": true,
+  "description": "「知识库」DSH 插件：侧栏常驻行 + 主面板内嵌 betterlife 报告库（FastAPI 后端反代到 127.0.0.1:8816，仅 DSH 登录用户可访问）。",
+  "type": "module",
+  "license": "MIT",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-layout"
+      ]
+    }
+  },
+  "files": [
+    "lib",
+    "client.js",
+    "cordis.patch.yml",
+    "server",
+    "verification",
+    "README.md"
+  ],
+  "scripts": {
+    "check": "node --check lib/index.js && node --check client.js && node --check verification/verify-app.mjs && node --check verification/verify-proxy.mjs"
+  }
+}

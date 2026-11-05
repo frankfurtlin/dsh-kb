@@ -1,0 +1,378 @@
+#!/usr/bin/env node
+/**
+ * dsh-kb 端到端验收（直连后端，不依赖 DSH 反代）。
+ *
+ * 脚本用系统 python3.11 在 127.0.0.1:8916 拉起 FastAPI（KB_DATA_DIR 指向临时目录，
+ * 不碰生产索引库），再用 Playwright 走一遍真实用户流程：层次导航（分类/系列/日期）→
+ * 全文检索与高亮 → 排序/分页 → 详情抽屉（已读/收藏）→ 打开原文 → 移动端。
+ *
+ * 关键约束：
+ *  - 只监听 127.0.0.1:8916；脚本退出前一定杀掉自己拉起的 uvicorn。
+ *  - 页面以 `http://127.0.0.1:8916/kb/` 打开，等价于 DSH iframe 里的相对路径环境。
+ *  - 断言页面与报告正文中不残留 `/mine/...` 绝对路径。
+ *
+ * 用法：node verification/verify-app.mjs [--url http://127.0.0.1:8916/kb/] [--out shots]
+ * 退出码：0 = 全部通过，1 = 有 FAIL，2 = 环境/启动失败。
+ */
+
+import { spawn } from 'node:child_process'
+import { createRequire } from 'node:module'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const HERE = dirname(fileURLToPath(import.meta.url))
+const SERVER_DIR = resolve(HERE, '..', 'server')
+const PYTHON = process.env.DSH_KB_PYTHON || '/usr/bin/python3.11'
+const require = createRequire('/root/workspace/hermes-site/tools/node_modules/')
+const { chromium } = require('playwright')
+
+function arg(name, fallback) {
+  const index = process.argv.indexOf(`--${name}`)
+  if (index === -1) return fallback
+  const value = process.argv[index + 1]
+  return value && !value.startsWith('--') ? value : fallback
+}
+
+const PAGE_URL = arg('url', 'http://127.0.0.1:8916/kb/')
+const OUT = resolve(arg('out', join(HERE, 'shots')))
+const ORIGIN = new URL(PAGE_URL).origin
+const PORT = Number(new URL(PAGE_URL).port || 80)
+const results = []
+let DATA_DIR = ''
+
+function check(name, ok, detail = '') {
+  results.push({ name, ok, detail })
+  console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` — ${detail}` : ''}`)
+}
+
+async function shot(page, name, fullPage = false) {
+  await page.screenshot({ path: join(OUT, name), fullPage })
+}
+
+async function waitForServer(url, timeoutMs = 60000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(1000) })
+      if (response.status < 500) return true
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+  return false
+}
+
+async function stopServer(child) {
+  if (!child || child.exitCode !== null) return
+  child.kill('SIGTERM')
+  await Promise.race([
+    new Promise((resolve) => child.once('exit', resolve)),
+    new Promise((resolve) => setTimeout(resolve, 4000)),
+  ])
+  if (child.exitCode === null) child.kill('SIGKILL')
+}
+
+async function api(path, options = undefined) {
+  const response = await fetch(ORIGIN + path, options)
+  return { status: response.status, json: response.headers.get('content-type')?.includes('json') ? await response.json() : null }
+}
+
+async function postState(body) {
+  const response = await fetch(ORIGIN + '/api/kb/state', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  return { status: response.status, json: await response.json().catch(() => null) }
+}
+
+
+async function seedAi(reportPath, payload) {
+  const env = { ...process.env, KB_DATA_DIR: DATA_DIR }
+  const code = [
+    'from app.services import kb_store',
+    `kb_store.set_ai(${JSON.stringify(reportPath)}, ${JSON.stringify(payload)})`,
+    'print("seeded")',
+  ].join('\n')
+  return new Promise((resolvePromise) => {
+    const child = spawn(PYTHON, ['-c', code], { cwd: SERVER_DIR, env })
+    let output = ''
+    child.stdout.on('data', (chunk) => { output += chunk.toString() })
+    child.stderr.on('data', (chunk) => { output += chunk.toString() })
+    seedLog = output
+    child.on('exit', (codeValue) => resolvePromise(codeValue === 0 && output.includes('seeded')))
+    child.on('error', () => resolvePromise(false))
+  })
+}
+
+let seedLog = ''
+
+async function main() {
+  mkdirSync(OUT, { recursive: true })
+  DATA_DIR = mkdtempSync(join(tmpdir(), 'dsh-kb-verify-'))
+  const child = spawn(PYTHON, ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(PORT), '--log-level', 'warning'], {
+    cwd: SERVER_DIR,
+    env: { ...process.env, KB_DATA_DIR: DATA_DIR, KB_EMBED_ENABLED: '0', KB_AI_SECRET_FILE: join(DATA_DIR, 'no-ai-bridge-secret') },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let serverLog = ''
+  child.stdout.on('data', (chunk) => { serverLog += chunk.toString() })
+  child.stderr.on('data', (chunk) => { serverLog += chunk.toString() })
+  let browser = null
+  try {
+    const up = await waitForServer(ORIGIN + '/api/kb/tree')
+    check(`后端启动 (${ORIGIN})`, up, up ? '' : serverLog.slice(-500))
+    if (!up) throw new Error('后端未启动')
+
+    const tree = (await api('/api/kb/tree')).json
+    check('GET /api/kb/tree 200 且有分类/系列/日期', tree && tree.total > 0 && tree.categories.length > 0 && tree.series.length > 0,
+      `total=${tree?.total} cats=${tree?.categories?.length} series=${tree?.series?.length}`)
+    check('GET /api/kb 200 且 items>0', (await api('/api/kb')).json?.items?.length > 0)
+    check('GET /kb/api/kb 200（反代前缀同样可用）', (await api('/kb/api/kb')).status === 200)
+    check('GET /kb 无尾斜杠 → 重定向 /kb/', await (async () => {
+      const response = await fetch(ORIGIN + '/kb', { redirect: 'manual' })
+      return [302, 307, 308].includes(response.status) && (response.headers.get('location') || '').endsWith('/kb/')
+    })())
+    const reportPath = (await api('/api/kb?limit=1')).json.items[0].path
+    check('GET /api/kb/report/<path> 200 且含 preview',
+      (await api('/api/kb/report/' + reportPath.split('/').map(encodeURIComponent).join('/'))).json?.item?.preview?.length > 40)
+
+    // ---------- P1：AI sidecar（直接种进临时索引库，验收不依赖模型/网络） ----------
+    const aiSeeded = await seedAi(reportPath, {
+      summary_ai: '这是一条 AI 摘要：报告复盘了今日 A 股主要指数的涨跌与资金流向，并给出次日观察点。',
+      key_points: ['三大指数集体上涨', '成交额放大到 2 万亿', '资金向头部集中'],
+      entities: [{ type: '指数', name: '上证指数' }, { type: '板块', name: '半导体' }],
+      tags: ['A股', '复盘', '资金流向', '半导体', '风险提示'],
+    })
+    check('P1 索引库可写入 AI sidecar', aiSeeded, aiSeeded ? '' : seedLog.slice(-300))
+    const aiStats = (await api('/api/kb/ai/stats')).json
+    check('P1 GET /api/kb/ai/stats 统计正确', aiStats?.total > 0 && aiStats?.enriched === 1,
+      `enriched=${aiStats?.enriched} total=${aiStats?.total} configured=${aiStats?.configured}`)
+    const aiReport = (await api('/api/kb/report/' + reportPath.split('/').map(encodeURIComponent).join('/'))).json?.item
+    check('P1 报告详情返回摘要/要点/标签/实体',
+      (aiReport?.summary_ai || '').startsWith('这是一条 AI 摘要') &&
+      (aiReport?.key_points || []).length === 3 && (aiReport?.tags || []).length === 5 &&
+      (aiReport?.entities || []).length === 2, `tags=${(aiReport?.tags || []).length}`)
+    check('P1 列表接口返回 AI 字段', ((await api('/api/kb?limit=1')).json?.items?.[0]?.tags || []).length === 5)
+
+    // ---------- P2/P3/P5：向量/问答/周报接口（临时后端无模型，验证降级路径） ----------
+    const embedStats = await api('/api/kb/embed/stats')
+    check('P2 GET /api/kb/embed/stats 返回模型与统计',
+      embedStats.status === 200 && typeof embedStats.json?.available === 'boolean' && embedStats.json?.stats?.total > 0,
+      `available=${embedStats.json?.available} total=${embedStats.json?.stats?.total}`)
+    const hybrid = await api('/api/kb/search?q=' + encodeURIComponent('铝业') + '&mode=hybrid&limit=5')
+    check('P2 混合检索可用（模型缺席时自动降级）',
+      hybrid.status === 200 && hybrid.json?.total > 0 && ['hybrid', 'lexical'].includes(hybrid.json?.mode),
+      `mode=${hybrid.json?.mode} total=${hybrid.json?.total}`)
+    const ask = await api('/api/kb/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: '测试' }) })
+    check('P3 问答在未配置模型时返回结构化错误',
+      ask.status === 503 || ask.json?.ok === false, `status=${ask.status}`)
+    const digest = await api('/api/kb/digest?days=90')
+    check('P5 GET /api/kb/digest 返回窗口/主题/统计',
+      digest.status === 200 && digest.json?.ok === true && digest.json?.total > 0 &&
+      Array.isArray(digest.json?.themes) && Array.isArray(digest.json?.categories),
+      `total=${digest.json?.total} themes=${digest.json?.themes?.length}`)
+
+    browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] })
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+    const page = await context.newPage()
+    const consoleErrors = []
+    page.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()) })
+    page.on('pageerror', (error) => consoleErrors.push('pageerror: ' + error.message))
+    await page.goto(PAGE_URL, { waitUntil: 'networkidle' })
+    await page.waitForSelector('.kb-item', { timeout: 15000 })
+
+    check('页面标题包含「知识库」', (await page.title()).includes('知识库'), await page.title())
+    const pageHtml = await page.content()
+    check('页面 HTML 无 /mine/ 绝对路径残留', !pageHtml.includes('/mine/'))
+
+    // ---------- 层次导航 ----------
+    const navCounts = await page.evaluate(() => ({
+      all: document.getElementById('count-all')?.textContent?.trim(),
+      unread: document.getElementById('count-unread')?.textContent?.trim(),
+      starred: document.getElementById('count-starred')?.textContent?.trim(),
+    }))
+    check('左导航视图计数与 tree 一致',
+      navCounts.all === String(tree.total) && navCounts.unread === String(tree.unread) && navCounts.starred === String(tree.starred),
+      JSON.stringify(navCounts))
+    const catButtons = await page.locator('#kb-cats .kb-cat').count()
+    check('分类列表数量 = tree 分类数 + 全部', catButtons === tree.categories.length + 1, `${catButtons} vs ${tree.categories.length + 1}`)
+    await shot(page, '01-home.png', true)
+
+    const catName = tree.categories.find((cat) => cat.count > 1 && cat.count < tree.total)?.name || tree.categories[0].name
+    await page.click(`#kb-cats .kb-cat[data-cat="${catName}"]`)
+    await page.waitForTimeout(400)
+    const catApi = (await api('/api/kb?category=' + encodeURIComponent(catName))).json
+    const catCards = await page.locator('.kb-item').count()
+    check(`分类筛选「${catName}」`, catCards === Math.min(catApi.total, 20),
+      `ui=${catCards} api=${catApi.total}`)
+    const seriesButton = page.locator('#kb-cats .kb-series[data-series]:not([data-series=""])').first()
+    if (await seriesButton.count()) {
+      const seriesName = await seriesButton.getAttribute('data-series')
+      await seriesButton.click()
+      await page.waitForTimeout(400)
+      const seriesApi = (await api(`/api/kb?category=${encodeURIComponent(catName)}&series=${encodeURIComponent(seriesName)}`)).json
+      const seriesCards = await page.locator('.kb-item').count()
+      check(`系列筛选「${seriesName}」`, seriesCards === Math.min(seriesApi.total, 20), `ui=${seriesCards} api=${seriesApi.total}`)
+    } else {
+      check('系列筛选', false, '该分类没有系列')
+    }
+    await shot(page, '02-nested.png', true)
+    await page.click('#kb-cats .kb-cat[data-cat=""]')
+    await page.waitForTimeout(300)
+
+    const dateRow = tree.dates.find((row) => row.count > 0)
+    await page.click(`#kb-dates .kb-date[data-date="${dateRow.date}"]`)
+    await page.waitForTimeout(400)
+    const dateApi = (await api(`/api/kb?date_from=${dateRow.date}&date_to=${dateRow.date}`)).json
+    check(`日期筛选 ${dateRow.date}`, (await page.locator('.kb-item').count()) === Math.min(dateApi.total, 20), `api=${dateApi.total}`)
+    await page.click('#kb-dates .kb-date[data-date=""]')
+    await page.waitForTimeout(300)
+
+    // ---------- 检索 ----------
+    await page.fill('#kb-search', '铝业')
+    await page.waitForTimeout(700)
+    const searchApi = (await api('/api/kb?q=' + encodeURIComponent('铝业'))).json
+    check('标题搜索「铝业」结果一致且高亮', (await page.locator('.kb-item').count()) === Math.min(searchApi.total, 20) &&
+      (await page.locator('.kb-item mark').count()) > 0, `api=${searchApi.total}`)
+    await shot(page, '03-search.png', true)
+
+    const bodyQuery = '资产负债率'
+    await page.fill('#kb-search', bodyQuery)
+    await page.waitForTimeout(700)
+    const bodyApi = (await api('/api/kb?q=' + encodeURIComponent(bodyQuery))).json
+    const bodyHit = await page.locator('.kb-item mark').count()
+    check(`正文检索「${bodyQuery}」有命中且高亮`, bodyApi.total > 0 && bodyHit > 0, `api=${bodyApi.total} marks=${bodyHit}`)
+    await page.click('#kb-search-clear')
+    await page.waitForTimeout(500)
+    check('清空搜索后恢复全量', (await page.locator('.kb-item').count()) === Math.min(tree.total, 20))
+
+    // ---------- 排序 / 分页 ----------
+    const titleApi = (await api('/api/kb?sort=title&limit=1')).json
+    await page.selectOption('#kb-sort', 'title')
+    await page.waitForTimeout(500)
+    const firstTitle = (await page.locator('.kb-item-open').first().innerText()).trim()
+    check('按标题排序', firstTitle === titleApi.items[0].title, firstTitle.slice(0, 24))
+    await page.selectOption('#kb-sort', 'date_desc')
+    await page.waitForTimeout(400)
+
+    check('分页器可见', await page.locator('#kb-pager').isVisible())
+    const firstPathBefore = await page.locator('.kb-item').first().getAttribute('data-path')
+    await page.click('#kb-next')
+    await page.waitForTimeout(500)
+    const firstPathAfter = await page.locator('.kb-item').first().getAttribute('data-path')
+    check('下一页翻页生效', firstPathBefore !== firstPathAfter && (await page.locator('#kb-prev').isEnabled()))
+    check('分页信息显示页码范围', /\/ \d+$/.test(await page.locator('#kb-result').innerText()))
+    await page.click('#kb-prev')
+    await page.waitForTimeout(500)
+
+    // ---------- 详情抽屉 / 已读收藏 ----------
+    const unreadBefore = (await api('/api/kb/tree')).json.unread
+    const cardTitle = (await page.locator('.kb-item-open').first().innerText()).trim()
+    const cardPath = await page.locator('.kb-item').first().getAttribute('data-path')
+    await page.click('.kb-item-open >> nth=0')
+    await page.waitForSelector('#kb-drawer:not(.bl-hidden)')
+    await page.waitForTimeout(600)
+    check('抽屉打开并显示标题', (await page.locator('#kb-drawer-title').innerText()).trim() === cardTitle)
+    const drawerText = await page.locator('#kb-drawer-body').innerText()
+    check('抽屉展示正文摘要（preview）', drawerText.length > 60, `len=${drawerText.length}`)
+    check('抽屉「打开原文」链接指向相对路径',
+      (await page.locator('#kb-drawer-actions a.kb-btn-primary').getAttribute('href')) === `reports/${cardPath}`)
+    const unreadAfter = (await api('/api/kb/tree')).json.unread
+    check('打开抽屉自动标记已读', unreadAfter === unreadBefore - 1, `${unreadBefore} → ${unreadAfter}`)
+    await shot(page, '04-drawer.png', true)
+
+    await page.click('#kb-drawer-star')
+    await page.waitForTimeout(600)
+    const starredCount = (await api('/api/kb/tree')).json.starred
+    check('抽屉收藏写入后端', starredCount === 1, `starred=${starredCount}`)
+    await page.click('.kb-drawer-foot button')
+    await page.waitForTimeout(300)
+
+    // ---------- P1：AI 在界面上的呈现 ----------
+    await page.locator('#count-all').click()
+    await page.waitForTimeout(300)
+    check('P1 卡片显示 AI 标记与标签', (await page.locator('.kb-ai-mark').count()) >= 1 && (await page.locator('.kb-item-tags .kb-tag').count()) >= 3,
+      `marks=${await page.locator('.kb-ai-mark').count()} tags=${await page.locator('.kb-item-tags .kb-tag').count()}`)
+    await page.locator('.kb-item-open').first().click()
+    await page.waitForSelector('#kb-drawer:not(.bl-hidden)', { timeout: 5000 })
+    check('P1 抽屉展示 AI 摘要块', await page.locator('.kb-ai-block').isVisible())
+    check('P1 抽屉展示要点列表', (await page.locator('.kb-points li').count()) >= 3)
+    check('P1 抽屉展示标签与实体', (await page.locator('.kb-drawer-tags .kb-tag').count()) >= 3 && (await page.locator('.kb-entity').count()) >= 2)
+    await page.locator('.kb-drawer-foot button').click()
+    await page.waitForTimeout(200)
+
+    await page.click('.kb-navitem[data-view="starred"]')
+    await page.waitForTimeout(500)
+    check('收藏视图出现已收藏报告', (await page.locator('.kb-item').count()) >= 1 && await page.locator('.kb-item .kb-star.is-on').count() >= 1)
+    await page.click('.kb-navitem[data-view="unread"]')
+    await page.waitForTimeout(500)
+    const unreadUi = (await api('/api/kb?view=unread')).json.total
+    check('未读视图计数一致', (await page.locator('.kb-item').count()) === Math.min(unreadUi, 20), `api=${unreadUi}`)
+    await page.click('.kb-navitem[data-view="all"]')
+    await page.waitForTimeout(400)
+
+    // ---------- 打开原文 ----------
+    await page.click('.kb-item-open >> nth=0')
+    await page.waitForSelector('#kb-drawer:not(.bl-hidden)')
+    const [reportPage] = await Promise.all([
+      context.waitForEvent('page'),
+      page.click('#kb-drawer-actions a.kb-btn-primary'),
+    ])
+    await reportPage.waitForURL(/\/reports\//, { timeout: 20000 }).catch(() => {})
+    await reportPage.waitForLoadState('load').catch(() => {})
+    const reportUrl = reportPage.url()
+    check('打开原文：面板内相对路径能打开报告', reportUrl.includes(`/kb/reports/${cardPath}`), reportUrl)
+    check('报告正文无 /mine/ 路径且标题非空',
+      !(await reportPage.content()).includes('/mine/') && (await reportPage.title()).trim().length > 0)
+    await reportPage.screenshot({ path: join(OUT, '05-report.png'), fullPage: true })
+    await reportPage.close()
+
+    // ---------- P5：周报面板 ----------
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(200)
+    await page.click('#kb-digest-entry')
+    await page.waitForSelector('#kb-digest:not(.bl-hidden)')
+    await page.waitForSelector('#kb-digest-body .kb-digest-meta', { timeout: 15000 })
+    const digestText = await page.locator('#kb-digest-body').innerText()
+    check('P5 周报面板展示概览与分类统计',
+      digestText.includes('篇报告') && digestText.includes('分类'),
+      digestText.slice(0, 60).replace(/\s+/g, ' '))
+    check('P5 周报主题卡片或统计视图存在',
+      (await page.locator('.kb-theme').count()) > 0 || (await page.locator('.kb-digest-chip').count()) > 0)
+    await shot(page, '08-digest.png', true)
+    await page.click('#kb-digest .kb-ask-foot .kb-btn-primary')
+    await page.waitForTimeout(200)
+    check('P5 关闭周报回到列表', await page.locator('#kb-digest').evaluate((node) => node.classList.contains('bl-hidden')))
+
+    // ---------- 移动端 ----------
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.reload({ waitUntil: 'networkidle' })
+    await page.waitForSelector('.kb-item')
+    check('移动端：侧栏与卡片可见', await page.locator('.kb-side').isVisible() && await page.locator('.kb-item').first().isVisible())
+    await page.fill('#kb-search', '全景')
+    await page.waitForTimeout(700)
+    check('移动端：搜索可用', (await page.locator('.kb-item').count()) > 0)
+    await shot(page, '06-mobile.png', true)
+
+    check('主页面无 JS 报错 / console error', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
+  } catch (error) {
+    check('验收流程未抛异常', false, error && error.stack ? error.stack.split('\n')[0] : String(error))
+  } finally {
+    try { if (browser) await browser.close() } catch {}
+    await stopServer(child)
+    if (DATA_DIR) rmSync(DATA_DIR, { recursive: true, force: true })
+  }
+
+  const passed = results.filter((item) => item.ok).length
+  const failed = results.length - passed
+  console.log(`\n${passed}/${results.length} passed; artifacts: ${OUT}`)
+  for (const item of results.filter((entry) => !entry.ok)) console.log(`FAILED: ${item.name}${item.detail ? ` — ${item.detail}` : ''}`)
+  process.exit(failed === 0 ? 0 : 1)
+}
+
+main().catch((error) => {
+  console.error('[verify] 未捕获异常:', error)
+  process.exit(1)
+})

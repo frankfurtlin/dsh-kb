@@ -1,0 +1,20 @@
+# 依赖与虚拟环境
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+
+# 运行数据（索引库/向量缓存/模型，可重建）
+server/data/
+
+# 密钥与本地环境
+server/.ai-secret
+server/.env.local
+.env
+
+# 验收产物（脚本可重新生成）
+verification/shots/
+
+# 杂项
+*.log
+.DS_Store

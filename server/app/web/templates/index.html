@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ app_title }}</title>
+<meta name="theme-color" content="#5b5ef7">
+<link rel="icon" type="image/png" href="static/icon-192.png">
+<link rel="apple-touch-icon" href="static/icon-192.png">
+<!-- 所有资源一律相对路径：页面在 / 与 /kb/ 下都能正确解析，iframe 内不用绝对前缀。 -->
+<link rel="stylesheet" href="static/style.css">
+<script>
+/* 主题要在首次绘制前定下来：放到 ui.js 里再设的话，深色用户会先看到一帧白色。 */
+(function () {
+  try {
+    var saved = localStorage.getItem('bl_theme');
+    var dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    document.documentElement.setAttribute('data-theme', saved || (dark ? 'dark' : 'light'));
+  } catch (e) {}
+})();
+</script>
+<!-- 经典脚本共享全局词法作用域，加载顺序有依赖：
+     core.js（API/safeFetch/esc/escAttr）→ ui.js（toast/离线条/主题）→ kb.js（知识库）。 -->
+<script src="static/core.js"></script>
+<script src="static/ui.js"></script>
+<script src="static/kb.js"></script>
+</head>
+<body>
+
+<a href="#kb-main" class="skip-link" aria-label="跳转到主要内容">跳转到主要内容</a>
+
+<!-- 断网状态条：由 ui.js 的 initOfflineWatch()/updateOfflineBar() 切换 bl-hidden。 -->
+<div id="offline-bar" class="offline-bar bl-hidden" role="status" aria-live="polite">
+  <span class="offline-dot" aria-hidden="true"></span>
+  <span class="offline-text">离线模式 · 数据在服务器上，暂时读不到也存不了</span>
+  <button type="button" class="offline-retry" onclick="location.reload()">重试</button>
+</div>
+
+<!-- 提示条由 ui.js 的 showToast 独占（data-type 决定配色，.bl-hidden 控制显隐） -->
+<div class="bl-toast bl-hidden" role="status" aria-live="polite"></div>
+
+<div class="kb-app">
+  <aside class="kb-side" aria-label="知识库导航">
+    <div class="kb-brand">
+      <span class="kb-brand-mark" aria-hidden="true">▤</span>
+      <div class="kb-brand-text">
+        <h1>知识库</h1>
+        <p id="kb-subtotal">个人报告与素材的检索台</p>
+      </div>
+      <button type="button" class="kb-iconbtn" onclick="toggleTheme()" aria-label="切换主题" title="切换主题">◐</button>
+    </div>
+
+    <nav class="kb-nav" aria-label="视图">
+      <button type="button" class="kb-navitem" data-view="all" onclick="kbSetView('all')" aria-pressed="true">
+        <span class="kb-navlabel">全部</span><span class="kb-navcount" id="count-all">…</span>
+      </button>
+      <button type="button" class="kb-navitem" data-view="unread" onclick="kbSetView('unread')" aria-pressed="false">
+        <span class="kb-navlabel">未读</span><span class="kb-navcount" id="count-unread">…</span>
+      </button>
+      <button type="button" class="kb-navitem" data-view="starred" onclick="kbSetView('starred')" aria-pressed="false">
+        <span class="kb-navlabel">收藏</span><span class="kb-navcount" id="count-starred">…</span>
+      </button>
+      <button type="button" class="kb-navitem kb-ask-entry" id="kb-ask-entry" onclick="kbAskOpen()">
+        <span class="kb-navlabel">AI 问答</span><span class="kb-navcount">✦</span>
+      </button>
+      <button type="button" class="kb-navitem" id="kb-digest-entry" onclick="kbDigestOpen()">
+        <span class="kb-navlabel">周报</span><span class="kb-navcount">◷</span>
+      </button>
+    </nav>
+
+    <div class="kb-sec">
+      <div class="kb-sec-head">分类</div>
+      <div class="kb-cats" id="kb-cats" role="group" aria-label="按分类筛选"></div>
+    </div>
+
+    <div class="kb-sec">
+      <div class="kb-sec-head">时间</div>
+      <div class="kb-dates" id="kb-dates" role="group" aria-label="按日期筛选"></div>
+    </div>
+
+    <div class="kb-side-foot">
+      <button type="button" class="kb-linkbtn" id="kb-refresh" onclick="kbRefresh()" title="重新扫描 reports/">
+        重新扫描
+      </button>
+      <span class="kb-side-hint" id="kb-side-hint"></span>
+    </div>
+  </aside>
+
+  <main class="kb-main" id="kb-main">
+    <header class="kb-toolbar">
+      <div class="kb-search-wrap">
+        <svg class="kb-search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+        <input type="text" id="kb-search" class="kb-search" placeholder="搜索标题与正文…"
+               aria-label="搜索标题与正文" autocomplete="off">
+        <button type="button" class="kb-search-clear bl-hidden" id="kb-search-clear"
+                onclick="kbClearSearch()" aria-label="清空搜索">✕</button>
+        <kbd class="kb-kbd">⌘K</kbd>
+      </div>
+      <div class="kb-mode" id="kb-mode" role="group" aria-label="检索方式">
+        <button type="button" class="kb-mode-btn is-on" id="kb-mode-hybrid" data-mode="hybrid"
+                onclick="kbSetMode('hybrid')" aria-pressed="true" title="用本地向量模型做语义检索，适合描述性提问">AI 语义</button>
+        <button type="button" class="kb-mode-btn" id="kb-mode-lexical" data-mode="lexical"
+                onclick="kbSetMode('lexical')" aria-pressed="false" title="按标题与正文精确匹配关键词">关键词</button>
+      </div>
+      <label class="kb-sort-wrap">
+        <span class="kb-sort-label">排序</span>
+        <select id="kb-sort" class="kb-sort" onchange="kbSetSort(this.value)" aria-label="排序方式">
+          <option value="date_desc">最新优先</option>
+          <option value="date_asc">最早优先</option>
+          <option value="title">按标题</option>
+          <option value="updated">最近更新</option>
+        </select>
+      </label>
+      <div class="kb-result" id="kb-result" aria-live="polite"></div>
+    </header>
+
+    <section class="kb-ask bl-hidden" id="kb-ask" aria-label="AI 问答">
+      <div class="kb-ask-head">
+        <span class="kb-ask-title">问知识库</span>
+        <span class="kb-ask-sub">语义检索 + 模型作答，结论标注报告出处</span>
+        <button type="button" class="kb-iconbtn" onclick="kbAskClose()" aria-label="关闭问答">✕</button>
+      </div>
+      <textarea id="kb-ask-input" class="kb-ask-input" rows="2"
+                placeholder="例如：最近一周市场全景里有哪些风险信号？"></textarea>
+      <div class="kb-ask-foot">
+        <span class="kb-ask-hint" id="kb-ask-hint"></span>
+        <button type="button" class="kb-btn kb-btn-primary" id="kb-ask-submit" onclick="kbAskSubmit()">提问</button>
+      </div>
+      <div class="kb-ask-result bl-hidden" id="kb-ask-result" aria-live="polite"></div>
+    </section>
+
+    <section class="kb-ask kb-digest bl-hidden" id="kb-digest" aria-label="周报">
+      <div class="kb-ask-head">
+        <span class="kb-ask-title">知识库周报</span>
+        <span class="kb-ask-sub" id="kb-digest-sub">最近 7 天的主题聚合，来自索引库与 AI 摘要</span>
+        <button type="button" class="kb-iconbtn" onclick="kbDigestClose()" aria-label="关闭周报">✕</button>
+      </div>
+      <div class="kb-digest-body" id="kb-digest-body" aria-live="polite"></div>
+      <div class="kb-ask-foot">
+        <span class="kb-ask-hint" id="kb-digest-hint"></span>
+        <button type="button" class="kb-btn" id="kb-digest-refresh" onclick="kbDigestLoad(true)">重新生成</button>
+        <button type="button" class="kb-btn kb-btn-primary" onclick="kbDigestClose()">回到列表</button>
+      </div>
+    </section>
+
+    <div class="kb-filterbar bl-hidden" id="kb-filterbar"></div>
+
+    <section class="kb-list" id="kb-list" aria-label="报告列表">
+      <div class="kb-loading"><span class="kb-spinner" aria-hidden="true"></span>加载知识库…</div>
+    </section>
+
+    <div class="kb-pager bl-hidden" id="kb-pager">
+      <button type="button" class="kb-pager-btn" id="kb-prev" onclick="kbPrevPage()">← 上一页</button>
+      <span class="kb-pager-info" id="kb-pager-info"></span>
+      <button type="button" class="kb-pager-btn" id="kb-next" onclick="kbNextPage()">下一页 →</button>
+    </div>
+  </main>
+</div>
+
+<div class="kb-drawer bl-hidden" id="kb-drawer" role="dialog" aria-modal="true" aria-labelledby="kb-drawer-title">
+  <div class="kb-drawer-backdrop" onclick="kbCloseDrawer()"></div>
+  <article class="kb-drawer-panel" tabindex="-1">
+    <header class="kb-drawer-head">
+      <div class="kb-drawer-kicker" id="kb-drawer-kicker"></div>
+      <h2 class="kb-drawer-title" id="kb-drawer-title"></h2>
+      <div class="kb-drawer-meta" id="kb-drawer-meta"></div>
+    </header>
+    <div class="kb-drawer-actions" id="kb-drawer-actions"></div>
+    <section class="kb-drawer-body" id="kb-drawer-body"></section>
+    <footer class="kb-drawer-foot">
+      <button type="button" class="kb-btn kb-btn-ghost" onclick="kbCloseDrawer()">关闭</button>
+    </footer>
+  </article>
+</div>
+
+<script>
+kbInit();
+</script>
+</body>
+</html>
