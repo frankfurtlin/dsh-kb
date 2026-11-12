@@ -25,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from app import config
 from app.api.routes import kb as kb_routes
 from app.api.routes import pages as page_routes
+from app.api.routes import public_site as public_routes
 from app.api.routes import reports as report_routes
 from app.config import ROUTE_PREFIX, STATIC_DIR
 from app.services import kb_ai, kb_embed, kb_enrich, kb_search, kb_store
@@ -109,3 +110,7 @@ for prefix in ("", ROUTE_PREFIX):
     app.include_router(page_routes.router, prefix=prefix)
     app.include_router(kb_routes.router, prefix=prefix)
     app.include_router(report_routes.router, prefix=prefix)
+
+# 公开报告站点：只注册一次（/kb-public/... 绝对路径），不随 ROUTE_PREFIX 复制，
+# 因为它由 Caddy 直接访问，不经过 DSH 前缀。
+app.include_router(public_routes.router)

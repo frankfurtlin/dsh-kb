@@ -3,8 +3,8 @@
  *
  * 手写 ModuleLoader 工厂，不经打包：只依赖宿主已提供的 react，用 h() 直接构造元素。
  * 做两件事：
- *   1. 在侧栏常驻行（sidebar.panellist）注册一行「知识库」（order 15，落在
- *      「Automation tasks」(10) 与「紫微斗数」(20) 之间）。
+ *   1. 在侧栏常驻行（sidebar.panellist）注册一行「知识库」（order 14，落在
+ *      「酒馆」(12) 与「紫微斗数」(16) 之间）。
  *   2. 在 main 座位注册 keyed 面板页：同源 iframe 指向宿主反代的 /kb/，
  *      工具条提供 返回对话 / 刷新 / 新窗口打开；报告正文也在 iframe 内打开。
  */
@@ -20,8 +20,8 @@ window.__ModuleLoader__.load({
 
     /** 侧栏行 id —— 同时是 main 座位的 key 与图标上的 data 锚点。 */
     var PANEL_ID = "kb";
-    /** 侧栏顺序：Automation tasks = 10，紫微斗数 = 20。 */
-    var PANEL_ORDER = 15;
+    /** 侧栏顺序：Automation tasks = 10，酒馆 = 12，知识库 = 14，紫微斗数 = 16，华尔街之狼 = 18。 */
+    var PANEL_ORDER = 14;
     /** 宿主反代的地址（带尾斜杠，应用内部全用相对路径）。 */
     var APP_URL = "/kb/";
 

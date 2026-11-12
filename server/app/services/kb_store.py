@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS reports (
     tags TEXT NOT NULL DEFAULT '[]',
     ai_version INTEGER NOT NULL DEFAULT 0,
     ai_at TEXT NOT NULL DEFAULT '',
-    ai_error TEXT NOT NULL DEFAULT ''
+    ai_error TEXT NOT NULL DEFAULT '',
+    public INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_reports_date ON reports(date);
 CREATE INDEX IF NOT EXISTS idx_reports_category ON reports(category);
@@ -58,6 +59,10 @@ EMBED_COLUMNS = {
     "embedding": "BLOB",
     "embed_model": "TEXT NOT NULL DEFAULT ''",
     "embed_at": "TEXT NOT NULL DEFAULT ''",
+}
+
+PUBLIC_COLUMNS = {
+    "public": "INTEGER NOT NULL DEFAULT 0",
 }
 
 AI_COLUMNS = {
@@ -93,7 +98,7 @@ def _connect() -> sqlite3.Connection:
 def _ensure_columns(conn: sqlite3.Connection) -> None:
     """给旧索引库补齐 P1 新增的 AI 列（幂等）。"""
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(reports)")}
-    for column, definition in {**AI_COLUMNS, **EMBED_COLUMNS}.items():
+    for column, definition in {**AI_COLUMNS, **EMBED_COLUMNS, **PUBLIC_COLUMNS}.items():
         if column not in existing:
             conn.execute(f"ALTER TABLE reports ADD COLUMN {column} {definition}")
     conn.commit()
@@ -228,6 +233,8 @@ def _row_to_item(row: sqlite3.Row) -> dict:
         "ai_error": row["ai_error"] or "",
         # P2：是否已有语义向量（前端可据此显示「语义可检索」状态）。
         "has_embedding": bool(row["embedding"]),
+        # P6：是否已公开（可被匿名只读访问）。
+        "public": bool(row["public"]),
     }
 
 
@@ -264,6 +271,8 @@ def list_reports(
         where.append("read = 0")
     elif view == "starred":
         where.append("starred = 1")
+    elif view == "public":
+        where.append("public = 1")
     clause = f" WHERE {' AND '.join(where)}" if where else ""
     order = {
         "date_asc": "CASE WHEN date = '' THEN 1 ELSE 0 END, date ASC, title ASC",
@@ -313,6 +322,7 @@ def tree() -> dict:
         total = conn.execute("SELECT COUNT(*) FROM reports").fetchone()[0]
         unread = conn.execute("SELECT COUNT(*) FROM reports WHERE read = 0").fetchone()[0]
         starred = conn.execute("SELECT COUNT(*) FROM reports WHERE starred = 1").fetchone()[0]
+        public = conn.execute("SELECT COUNT(*) FROM reports WHERE public = 1").fetchone()[0]
         categories = [
             {"name": row["name"], "count": row["count"]}
             for row in conn.execute(
@@ -339,6 +349,7 @@ def tree() -> dict:
         "total": int(total),
         "unread": int(unread),
         "starred": int(starred),
+        "public": int(public),
         "categories": categories,
         "series": series,
         "dates": dates,
@@ -427,6 +438,33 @@ def set_state(path: str, read: bool | None = None, starred: bool | None = None) 
     if not row:
         return None
     return {"path": row["path"], "read": bool(row["read"]), "starred": bool(row["starred"])}
+
+
+# ---------- P6：公开报告（对外只读共享） ----------
+
+
+def public_paths() -> list[str]:
+    """所有已标记公开的报告相对路径（按路径排序，结果稳定便于缓存）。"""
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT path FROM reports WHERE public = 1 ORDER BY path").fetchall()
+    finally:
+        conn.close()
+    return [row["path"] for row in rows]
+
+
+def set_public(path: str, public: bool) -> dict | None:
+    """切换单篇报告的公开状态；报告不在索引里时返回 None。"""
+    conn = _connect()
+    try:
+        conn.execute("UPDATE reports SET public = ? WHERE path = ?", (1 if public else 0, path))
+        conn.commit()
+        row = conn.execute("SELECT path, public FROM reports WHERE path = ?", (path,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    return {"path": row["path"], "public": bool(row["public"])}
 
 
 # ---------- P1：AI sidecar（摘要/要点/实体/标签） ----------

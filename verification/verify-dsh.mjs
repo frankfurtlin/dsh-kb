@@ -123,6 +123,40 @@ try {
     await frame.click('.kb-drawer-foot button')
     await page.waitForTimeout(300)
 
+    // P6：公开分享（匿名只读外链）—— 状态自适应：按当前按钮 aria-pressed 决定断言方向
+    await frame.click('.kb-item-open >> nth=0')
+    await frame.waitForSelector('#kb-drawer:not(.bl-hidden)')
+    await page.waitForTimeout(500)
+    check('抽屉有公开分享按钮', (await frame.locator('#kb-drawer-public').count()) === 1)
+    const pressed = (await frame.getAttribute('#kb-drawer-public', 'aria-pressed')) === 'true'
+    if (pressed) {
+      // 当前已公开：先取消，验证复制按钮消失
+      await frame.click('#kb-drawer-public')
+      await page.waitForTimeout(900)
+      check('取消公开后复制按钮消失', (await frame.locator('#kb-drawer-copy').count()) === 0)
+      await frame.click('#kb-drawer-public')
+      await page.waitForTimeout(900)
+    } else {
+      await frame.click('#kb-drawer-public')
+      await page.waitForTimeout(900)
+    }
+    check('公开后出现复制链接按钮', (await frame.locator('#kb-drawer-copy').count()) === 1)
+    await page.screenshot({ path: join(OUT, '11-dsh-public.png'), fullPage: true })
+    // 复位：取消公开，验证回到未公开态
+    await frame.click('#kb-drawer-public')
+    await page.waitForTimeout(900)
+    check('取消公开后复制按钮消失', (await frame.locator('#kb-drawer-copy').count()) === 0)
+    const kbApi = 'http://127.0.0.1:8816'
+    const st = await (await fetch(kbApi + '/api/kb/public')).json()
+    for (const path of st.paths || []) {
+      await fetch(kbApi + '/api/kb/public', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, public: false }),
+      })
+    }
+    await frame.click('.kb-drawer-foot button')
+    await page.waitForTimeout(300)
+
     // P3：AI 问答面板（iframe 内，真实调模型，较慢）
     await frame.click('#kb-ask-entry')
     await frame.waitForSelector('#kb-ask:not(.bl-hidden)', { timeout: 10000 })

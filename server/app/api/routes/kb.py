@@ -7,7 +7,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app import config
-from app.services import kb_ai, kb_ask, kb_digest as kb_digest_service, kb_embed, kb_enrich, kb_search as kb_search_service, kb_store
+from app.services import (kb_ai, kb_ask, kb_digest as kb_digest_service, kb_embed, kb_enrich,
+                          kb_public, kb_search as kb_search_service, kb_store)
 
 router = APIRouter(prefix="/api")
 
@@ -183,3 +184,32 @@ def kb_digest(days: int = 7, refresh: bool = False) -> dict:
     """窗口内报告的主题聚合 + 模型周报；结果有缓存，refresh=true 重算。"""
     digest = kb_digest_service.build(days=days, refresh=refresh)
     return {"ok": True, **digest}
+
+
+# ---------- P6：公开报告（对外只读共享） ----------
+
+
+class KbPublicBody(BaseModel):
+    path: str = ""
+    public: bool = True
+
+
+@router.get("/kb/public")
+def kb_public_state() -> dict:
+    """当前公开集合 + 外链基址，供前端显示「公开」徽标与复制链接。"""
+    return {"ok": True, "base": config.PUBLIC_BASE_URL, "paths": sorted(kb_public.flags())}
+
+
+@router.post("/kb/public")
+def kb_set_public(body: KbPublicBody):
+    """切换一篇报告的公开状态；只有真实存在的 .html/.htm 报告可以公开。"""
+    rel = kb_public.normalize_rel(body.path)
+    if rel is None or not kb_public.is_report_rel(rel):
+        return _error(400, "无效的报告路径")
+    if not kb_public.report_exists(rel):
+        return _error(404, "报告不存在")
+    try:
+        result = kb_public.set_public(rel, bool(body.public))
+    except ValueError as exc:
+        return _error(409, str(exc))
+    return {"ok": True, **result, "url": kb_public.public_url(rel) if body.public else ""}

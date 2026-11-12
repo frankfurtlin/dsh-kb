@@ -50,22 +50,28 @@ def target_exists(value: str) -> bool:
     return target is not None and target.is_file()
 
 
-def rewrite_html(text: str) -> str:
-    """把报告正文里的根绝对链接改写到 /kb 前缀下（相对路径保持原样）。"""
+def rewrite_html(text: str, prefix: str = ROUTE_PREFIX) -> str:
+    """把报告正文里的根绝对链接改写到 `prefix` 下（相对路径保持原样）。
+
+    默认前缀是插件面板的 `/kb`；公开共享页传入 `/kb-public`，同一篇报告
+    在两种访问方式下打开时内链都不会跳出当前站点前缀。
+    """
     if not text:
         return text
+    canonical = f"{prefix}/reports"
+    static_prefix = f"{prefix}/static"
 
     # 1) 旧站前缀整体换掉（含被 JS 拼进字符串里的路径）。
-    text = text.replace("/mine/reports/", f"{CANONICAL}/")
-    text = text.replace("/mine/report/", f"{CANONICAL}/")
-    text = text.replace("/mine/static/", f"{STATIC_PREFIX}/")
-    text = text.replace("/mine/", f"{ROUTE_PREFIX}/")
+    text = text.replace("/mine/reports/", f"{canonical}/")
+    text = text.replace("/mine/report/", f"{canonical}/")
+    text = text.replace("/mine/static/", f"{static_prefix}/")
+    text = text.replace("/mine/", f"{prefix}/")
 
     # 2) 剩余根绝对 href/src：目标确实在 reports/ 里才改写，其余原样保留。
     def replace_attr(match: re.Match[str]) -> str:
         attr, value = match.group(1), match.group(2)
         if target_exists(value):
-            return f'{attr}="{CANONICAL}/{value}"'
+            return f'{attr}="{canonical}/{value}"'
         return match.group(0)
 
     text = _ATTR_RE.sub(replace_attr, text)
@@ -74,7 +80,7 @@ def rewrite_html(text: str) -> str:
     def replace_css_url(match: re.Match[str]) -> str:
         value = match.group(1)
         if target_exists(value):
-            return f'url("{CANONICAL}/{value}")'
+            return f'url("{canonical}/{value}")'
         return match.group(0)
 
     return _CSS_URL_RE.sub(replace_css_url, text)

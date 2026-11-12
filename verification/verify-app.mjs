@@ -174,6 +174,37 @@ async function main() {
       Array.isArray(digest.json?.themes) && Array.isArray(digest.json?.categories),
       `total=${digest.json?.total} themes=${digest.json?.themes?.length}`)
 
+    // ---------- P6：公开分享（匿名只读外链） ----------
+    const publicList = await api('/api/kb/public')
+    check('P6 GET /api/kb/public 返回基址与集合',
+      publicList.status === 200 && typeof publicList.json?.base === 'string' && Array.isArray(publicList.json?.paths),
+      publicList.json?.base)
+    const pubPair = (await api('/api/kb?limit=2')).json.items
+    const pubPath = pubPair[0].path
+    const privPath = pubPair[1].path
+    const setPub = await api('/api/kb/public', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: pubPath, public: true }) })
+    check('P6 设置公开成功并返回外链',
+      setPub.status === 200 && setPub.json?.ok === true && setPub.json?.public === true && String(setPub.json?.url).includes('/kb-public/reports/'),
+      setPub.json?.url)
+    const pubResp = await fetch(ORIGIN + '/kb-public/reports/' + pubPath.split('/').map(encodeURIComponent).join('/'))
+    const pubText = await pubResp.text()
+    check('P6 公开报告可匿名访问且内链改写',
+      pubResp.status === 200 && pubText.includes('/kb-public/reports/'), `${pubResp.status}`)
+    const pubIndexResp = await fetch(ORIGIN + '/kb-public/')
+    const pubIndexText = await pubIndexResp.text()
+    check('P6 公开目录页列出该报告',
+      pubIndexResp.status === 200 && pubIndexText.includes(pubPair[0].title.slice(0, 12)), `${pubIndexResp.status}`)
+    const privResp = await fetch(ORIGIN + '/kb-public/reports/' + privPath.split('/').map(encodeURIComponent).join('/'))
+    check('P6 未公开报告匿名访问 404', privResp.status === 404, `${privResp.status}`)
+    const sharedAsset = await fetch(ORIGIN + '/kb-public/reports/assets/shell.css')
+    check('P6 共享资源可匿名访问', sharedAsset.status === 200, `${sharedAsset.status}`)
+    const apiLeak = await fetch(ORIGIN + '/kb-public/api/kb/tree')
+    check('P6 公开前缀不暴露 /api/*', apiLeak.status === 404, `${apiLeak.status}`)
+    const traversal = await fetch(ORIGIN + '/kb-public/reports/%2e%2e%2f%2e%2e%2fetc%2fpasswd')
+    check('P6 公开路径拒绝目录穿越', traversal.status === 404, `${traversal.status}`)
+    const unsetPub = await api('/api/kb/public', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: pubPath, public: false }) })
+    check('P6 取消公开成功', unsetPub.status === 200 && unsetPub.json?.public === false)
+
     browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] })
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
     const page = await context.newPage()
@@ -302,6 +333,25 @@ async function main() {
     check('P1 抽屉展示标签与实体', (await page.locator('.kb-drawer-tags .kb-tag').count()) >= 3 && (await page.locator('.kb-entity').count()) >= 2)
     await page.locator('.kb-drawer-foot button').click()
     await page.waitForTimeout(200)
+
+    // ---------- P6：公开分享 UI ----------
+    const publicCount = (await api('/api/kb/tree')).json.public
+    check('P6 左导航出现公开计数', (await page.locator('#count-public').innerText()).trim() === String(publicCount), `${publicCount}`)
+    await page.locator('.kb-item-open').first().click()
+    await page.waitForSelector('#kb-drawer:not(.bl-hidden)', { timeout: 5000 })
+    check('P6 抽屉有公开按钮', (await page.locator('#kb-drawer-public').count()) === 1)
+    await page.locator('#kb-drawer-public').click()
+    await page.waitForTimeout(900)
+    const afterPub = (await api('/api/kb/public')).json
+    check('P6 抽屉切换公开写入后端', (afterPub?.paths || []).length >= 1, JSON.stringify(afterPub?.paths))
+    check('P6 公开后出现复制链接按钮', (await page.locator('#kb-drawer-copy').count()) === 1)
+    check('P6 卡片出现公开徽标', (await page.locator('.kb-pub-mark').count()) >= 1)
+    await shot(page, '09-public.png', true)
+    await page.locator('#kb-drawer-public').click()
+    await page.waitForTimeout(900)
+    check('P6 取消公开后集合清空', ((await api('/api/kb/public')).json?.paths || []).length === 0)
+    await page.locator('.kb-drawer-foot button').click()
+    await page.waitForTimeout(300)
 
     await page.click('.kb-navitem[data-view="starred"]')
     await page.waitForTimeout(500)

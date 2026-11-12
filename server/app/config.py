@@ -38,6 +38,12 @@ INDEX_FILE = DATA_DIR / "kb.sqlite"
 # 这样 iframe 直连 8916（/kb/...）与 DSH 内（/kb/...）都能打开。
 ROUTE_PREFIX = "/kb"
 
+# ---------- P6：公开报告共享（对外匿名只读） ----------
+# 公开页由 Caddy 在 hermes 域名上单独反代到本服务（/kb-public/*），不经过 DSH 鉴权。
+# 前端「复制链接」按钮显示的绝对地址；部署换域名时改这个环境变量即可。
+PUBLIC_BASE_URL = (os.environ.get("KB_PUBLIC_BASE_URL", "").strip()
+                   or "https://hermes.frankfurtlin.top/kb-public").rstrip("/")
+
 # ---------- AI（P1–P5）：模型能力由 DSH 自己的 LLM（dsh-agent 默认模型）提供 ----------
 # 后端不持有任何模型密钥：所有模型请求发到 host 插件的内部 AI 桥
 # （/kb/_internal/ai），桥再用 DSH 的默认模型完成调用并回传文本。

@@ -3,7 +3,10 @@
 把 betterlife 老站的**报告库**拆成独立 DSH 插件：侧栏常驻行「知识库」（`order: 15`，
 排在「Automation tasks」之后），主面板内嵌同源 iframe。宿主半把 `/kb/*` 反代到本机
 `127.0.0.1:8816` 的 FastAPI；后端只读 betterlife 的 `reports/`，唯一的写入点是自己的
-SQLite 索引库（摘要/正文缓存 + 已读/收藏 + AI sidecar + 向量）。
+SQLite 索引库（摘要/正文缓存 + 已读/收藏 + 公开标记 + AI sidecar + 向量）。
+
+另有一条**匿名只读外链**（P6）：作者把某篇报告标记为「公开」后，别人不需要 DSH 账号，
+就能通过 `https://hermes.frankfurtlin.top/kb-public/...` 打开这篇报告与它引用的附件。
 
 **没有登录/认证代码**：插件不带账号、密码、session、cookie、登录页；鉴权完全交给 DSH
 宿主的反代闸门（每个请求先过 `connection.requestRejection()`），后端只监听 `127.0.0.1`。
@@ -47,6 +50,15 @@ SQLite 索引库（摘要/正文缓存 + 已读/收藏 + AI sidecar + 向量）�
   可直接检索、读报告、问知识库（走本机 8816，不需要登录）。
 - **P5 周报**：侧栏「周报」→ 最近 7 天的分类/标签/系列聚合 + 模型主题归纳（3-6 个主题，
   每个带相关报告），结果按天缓存在 `server/data/digest.json`。
+- **P6 公开外链**：抽屉里点「公开」→ 生成匿名可访问的
+  `https://hermes.frankfurtlin.top/kb-public/reports/<path>` 并复制链接；侧栏「公开」视图
+  集中列出已公开报告，卡片带绿色「公开」徽标，再次点击即可取消。
+  - 匿名端只放行：已公开报告页本身 + `reports/assets/` 共享资源 + 该报告 HTML/CSS 显式引用
+    的附件（css 追一层 `@import/url()`，上限 200）+ 同目录非 HTML 兄弟文件 +
+    `<报告目录>/images/<报告名>/` 与 `<报告目录>/<报告名>/` 图片目录；其余一律 404。
+  - 只允许 GET/HEAD；写接口 `/api/kb/public` 仍只经 DSH 反代（要登录）。
+  - 公开页内链统一改写成 `/kb-public/...`，并带 `X-Robots-Tag: noindex, nofollow`。
+  - 外链入口在 DSH 之外（hermes 站点 Caddy），因为 DSH 在路由分发前有全局匿名闸门。
 
 ## 结构
 
@@ -69,14 +81,17 @@ server/app/
   services/kb_search.py     P2：混合检索编排 + 向量补齐
   services/kb_ask.py        P3：RAG 问答（检索 → 引用回答）
   services/kb_digest.py     P5：周报 / 主题聚合（带按天缓存）
+  services/kb_public.py     P6：公开标记 + 匿名可访问附件白名单
   cli_enrich.py             批量补 AI sidecar 的 CLI（Hermes 写完报告可调用）
   api/routes/pages.py       GET /（Jinja2 模板）
   api/routes/kb.py          GET /api/kb、/api/kb/tree、/api/kb/search、/api/kb/report/<path>、POST /api/kb/state
   api/routes/reports.py     GET /reports、/reports/、/reports/{path:path}
+  api/routes/public_site.py P6：匿名只读站 /kb-public/ 与 /kb-public/reports/<path>
   web/templates/index.html  知识库页面（左导航 + 列表 + 抽屉）
   web/static/               style.css / core.js / ui.js / kb.js / icon-192.png
 verification/verify-app.mjs   后端 + 页面端到端验收（Playwright 直连 8916，自带启动/清理）
 verification/verify-proxy.mjs host 半隔离验收（mock ctx，不用装进 DSH）
+verification/verify-dsh.mjs   真实 DSH 面板内验收（Playwright + launch token）
 verification/shots/           验收截图
 ```
 
@@ -129,6 +144,7 @@ host 半默认反代 `127.0.0.1:8816`；如需临时指向其它端口，可设
 | `KB_EMBED_MODEL` | `BAAI/bge-small-zh-v1.5` | fastembed 模型名 |
 | `KB_EMBED_MODEL_DIR` / `KB_EMBED_HF_HOME` | `server/data/models` / `server/data/hf-cache` | 模型与 HF 缓存目录 |
 | `KB_HYBRID_WEIGHT_SEMANTIC` / `KB_HYBRID_WEIGHT_LEXICAL` | `0.62` / `0.38` | 混合检索权重 |
+| `KB_PUBLIC_BASE_URL` | `https://hermes.frankfurtlin.top/kb-public` | 公开外链前缀（与 Caddy 路由一致；改域名时同步改） |
 
 删除 `KB_DATA_DIR/kb.sqlite` 即可重建索引（已读/收藏状态会一并清空，属预期）。
 
@@ -148,7 +164,10 @@ host 半默认反代 `127.0.0.1:8816`；如需临时指向其它端口，可设
 | POST | `/api/kb/ask` | body `{question, limit?}` → `{ok, answer, citations, related, mode}`（未配置模型 503） |
 | GET | `/api/kb/digest?days=7&refresh=0` | 周报：`{ok, total, categories, series, tags, themes, overview, mode, cached}` |
 | POST | `/api/kb/state` | body `{path, read?, starred?}`，路径校验（禁止 `..`、只允许 .html/.htm） |
+| GET | `/api/kb/public` | 公开状态：`{ok, base, paths}` |
+| POST | `/api/kb/public` | body `{path, public}`：公开/取消公开 → `{ok, path, public, url}` |
 | GET | `/reports`、`/reports/{path:path}` | 报告正文；HTML 改写内链后返回 |
+| GET | `/kb-public/`、`/kb-public/reports/{path:path}` | **匿名只读**公开站与公开报告；未公开一律 404 |
 
 上述路径同时挂在 `/kb/*` 下（如 `/kb/`、`/kb/api/kb`、`/kb/reports/...`、`/kb/static/...`），
 因为 host 半按 ziwei 的惯例**原样转发** `req.url`（不剥前缀）。直连 8916 时两套路径都可用，
@@ -165,18 +184,20 @@ node verify-app.mjs      # 后端 + 页面端到端（Playwright 直连 http://1
 node verify-proxy.mjs    # host 半（lib/index.js）隔离验收，不需要装进 DSH
 ```
 
-最近一次结果（2026-11-05，M1+M2+AI 后）：
+最近一次结果（2026-11-12，P6 公开外链后）：
 
-- `verify-app.mjs` **47/47 passed** —— 树/列表/检索/前缀反代/重定向；分类、系列、日期筛选；
+- `verify-app.mjs` **62/62 passed** —— 树/列表/检索/前缀反代/重定向；分类、系列、日期筛选；
   标题与正文搜索高亮；排序与分页；详情抽屉（preview、自动已读、收藏、打开原文）；
-  AI sidecar 卡片/抽屉；向量与问答接口的降级路径；周报面板（概览/主题/统计）；收藏/未读
-  视图；移动端；无 JS 报错。
+  AI sidecar 卡片/抽屉；向量与问答接口的降级路径；周报面板（概览/主题/统计）；公开开关
+  （公开/取消公开、公开视图、公开外链匿名 200、附件白名单、私有报告 404、越权路径 404）；
+  收藏/未读视图；移动端；无 JS 报错。
 - `verify-proxy.mjs` **11/11 passed** —— 导出与注册、`/kb/`、`/kb/api/kb`、`/kb/static/*`、
   AI 桥鉴权（无密钥/错密钥都按 404 隐藏）
   反代、`/kb?x=1 → 302 /kb/?x=1`、401/403 鉴权闸门、上游未启动时 502 中文提示。
-- `verify-dsh.mjs` **15/15 passed**（真实 DSH 面板内）—— 匿名 401、侧栏「知识库」行、
-  iframe `/kb/`、首屏卡片/计数/分类、搜索高亮、分类筛选、详情抽屉与自动已读、AI 问答
-  （真实调模型，答案 + 引用）、周报面板、无插件相关 console error。
+- `verify-dsh.mjs` **19/19 passed**（真实 DSH 面板内）—— 匿名 401、侧栏「知识库」行、
+  iframe `/kb/`、首屏卡片/计数/分类、搜索高亮、分类筛选、详情抽屉与自动已读、公开开关
+  （抽屉按钮 / 复制链接按钮出现与消失，状态自适应）、AI 问答（真实调模型，答案 + 引用）、
+  周报面板、无插件相关 console error。
 
 AI 问答与周报要调模型（单次 20–40s），host 半对 `/kb/api/kb/ask`、`/kb/api/kb/digest`
 单独放宽到 180s，其余接口仍 10s 超时。
@@ -195,6 +216,7 @@ AI 问答与周报要调模型（单次 20–40s），host 半对 `/kb/api/kb/as
 | `08-digest.png` | 周报面板（窗口、主题卡片、分类/标签统计） |
 | `09-dsh-digest.png` | 真实 DSH 面板内的周报视图（`verify-dsh.mjs`） |
 | `10-dsh-ask.png` | 真实 DSH 面板内的 AI 问答（答案 + 引用，`verify-dsh.mjs`） |
+| `11-dsh-public.png` | 真实 DSH 面板内：抽屉里的「公开 / 已公开」与「复制链接」（`verify-dsh.mjs`） |
 
 语法门：`node --check lib/index.js && node --check client.js && node --check verification/verify-app.mjs && node --check verification/verify-proxy.mjs`；
 Python 用 `/usr/bin/python3.11 -m py_compile $(find server -name '*.py')`。
@@ -220,6 +242,29 @@ Python 用 `/usr/bin/python3.11 -m py_compile $(find server -name '*.py')`。
 - **安全**：所有请求先过 DSH 鉴权；`safe_path()` 用 `resolve()` + `relative_to()` 防目录穿越；
   POST 状态接口只接受 .html/.htm 且拒绝 `..`；后端只监听 `127.0.0.1`；不暴露 docs/openapi。
 
+## 公开外链部署（hermes 站点 Caddy）
+
+DSH 在路由分发之前有全局匿名闸门（匿名请求 `/kb/` 直接 401），插件无法自己放行匿名访问，
+所以公开外链走 DSH 之外的入口：`hermes.frankfurtlin.top` 的 `/kb-public/*` 直连后端
+`127.0.0.1:8816`。Caddyfile（`/etc/caddy/Caddyfile`，hermes 站点内）需要：
+
+```caddyfile
+handle /kb-public {
+    redir * /kb-public/ 308
+}
+handle /kb-public/* {
+    header X-Robots-Tag "noindex, nofollow"
+    reverse_proxy 127.0.0.1:8816
+}
+```
+
+注意：本机 Caddyfile 全局是 `admin off`，`systemctl reload caddy` 会失败（admin API 不可用），
+改配置后需 `systemctl restart caddy`（先 `caddy validate --config /etc/caddy/Caddyfile
+--adapter caddyfile` 校验；重启会让所有站点短暂断连）。
+
+公开面只回放已公开报告及其附件，`/kb-public/api/*` 之类路径一律 404；公开站带
+`X-Robots-Tag: noindex, nofollow`，不被搜索引擎收录。
+
 ## 已知限制 / 风险
 
 - 侧栏行与 main 面板依赖宿主 `sidebar.panellist` / `main` 座位与 `ctx.layout.selectPanel(null)`
@@ -241,3 +286,5 @@ Python 用 `/usr/bin/python3.11 -m py_compile $(find server -name '*.py')`。
 - 报告日期来自目录名 `YYYYMMDD/`；无日期目录的报告不参与日期筛选（沿用原站规则）。
 - 报告正文里的站外链接、`/login.html` 等不存在的目标保持原样，点击可能在 iframe 内 404
   或跳出 DSH 路由；这是报告自身内容，插件不做兜底。
+- 公开外链依赖 Caddy 的 `/kb-public` 路由与 `KB_PUBLIC_BASE_URL` 一致；换域名/换前缀时两处
+  要同时改。公开标记是「按报告」的，没有密码/有效期；取消公开后旧链接立即 404。

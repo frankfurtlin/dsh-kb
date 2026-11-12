@@ -27,6 +27,8 @@ var _kbTotal = 0;
 var _kbTimer = null;
 var _kbDrawerPath = '';
 var _kbEmbedAvailable = false;
+var _kbPublicBase = '';
+var _kbPublicPaths = {};
 
 var KB_CAT_SLUG = {
   '市场全景': 'market',
@@ -85,6 +87,7 @@ function kbInit() {
   kbBindSearch();
   kbBindKeys();
   kbLoadEmbedStatus();
+  kbLoadPublicState();
   kbLoadTree();
   kbLoad();
 }
@@ -161,7 +164,7 @@ async function kbLoadTree(force) {
 
 function kbRenderCounts() {
   var tree = _kbTree || { total: 0, unread: 0, starred: 0 };
-  var map = { all: tree.total, unread: tree.unread, starred: tree.starred };
+  var map = { all: tree.total, unread: tree.unread, starred: tree.starred, public: tree.public || 0 };
   Object.keys(map).forEach(function (view) {
     var node = kbEl('count-' + view);
     if (node) node.textContent = map[view];
@@ -281,6 +284,7 @@ function kbCard(item, index) {
       (item.series ? '<span class="kb-item-series">' + esc(item.series) + '</span>' : '') +
       (hasAi ? '<span class="kb-ai-mark" title="AI 已生成结构化摘要">AI</span>' : '') +
       (item.match === 'semantic' ? '<span class="kb-semantic-mark" title="语义相似命中">语义</span>' : '') +
+      (item.public ? '<span class="kb-pub-mark" title="已公开：拿到链接的人无需账号即可阅读">公开</span>' : '') +
       '<span class="kb-item-spacer"></span>' +
       (item.date ? '<time class="kb-item-date">' + kbFmtDate(item.date) + '</time>' : '') +
       '<button type="button" class="kb-star' + (item.starred ? ' is-on' : '') + '" ' +
@@ -388,7 +392,7 @@ function kbRenderFilterbar() {
   if (kbState.category) chips.push([kbState.category, 'kbClearCategory']);
   if (kbState.series) chips.push([kbState.series, 'kbClearSeries']);
   if (kbState.date) chips.push(['日期：' + kbFmtDate(kbState.date), 'kbResetDates']);
-  if (kbState.view !== 'all') chips.push([kbState.view === 'unread' ? '仅未读' : '仅收藏', 'kbClearView']);
+  if (kbState.view !== 'all') chips.push([kbState.view === 'unread' ? '仅未读' : (kbState.view === 'starred' ? '仅收藏' : '仅公开'), 'kbClearView']);
   if (!chips.length) {
     bar.classList.add('bl-hidden');
     bar.innerHTML = '';
@@ -443,6 +447,66 @@ function kbNextPage() {
 function kbScrollTop() {
   var main = kbEl('kb-main');
   if (main) main.scrollTop = 0;
+}
+
+// ---------- P6：公开分享（匿名只读外链） ----------
+
+async function kbLoadPublicState() {
+  var data = await safeFetch(API + '/kb/public');
+  if (!data) return;
+  _kbPublicBase = data.base || '';
+  _kbPublicPaths = {};
+  (data.paths || []).forEach(function (path) { _kbPublicPaths[path] = true; });
+  _kbItems.forEach(function (item) {
+    if (_kbPublicPaths[item.path]) item.public = true;
+  });
+}
+
+function kbPublicUrl(path) {
+  return (_kbPublicBase || '') + '/reports/' + path.split('/').map(encodeURIComponent).join('/');
+}
+
+async function kbDrawerTogglePublic() {
+  var item = kbFindItem(_kbDrawerPath);
+  if (!item) return;
+  var next = !item.public;
+  var data = await safeFetch(API + '/kb/public', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: item.path, public: next }),
+  });
+  if (!data || data.ok === false) {
+    showToast((data && data.error) || '公开状态没有保存成功', 'error');
+    return;
+  }
+  item.public = data.public;
+  if (data.public) _kbPublicPaths[item.path] = true;
+  else delete _kbPublicPaths[item.path];
+  if (_kbTree) _kbTree.public = Math.max(0, (_kbTree.public || 0) + (data.public ? 1 : -1));
+  kbRenderCounts();
+  kbFillDrawer(item, { preview: item.preview });
+  kbRenderList();
+  showToast(data.public ? '已公开 · 点「复制链接」发出去' : '已取消公开', data.public ? 'success' : 'info');
+}
+
+function kbCopyPublicLink() {
+  var item = kbFindItem(_kbDrawerPath);
+  if (!item) return;
+  var url = kbPublicUrl(item.path);
+  function copied() { showToast('公开链接已复制', 'success'); }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(copied, function () { window.prompt('复制公开链接：', url); });
+  } else {
+    window.prompt('复制公开链接：', url);
+  }
+}
+
+async function kbTogglePublic(event, index) {
+  if (event) event.stopPropagation();
+  var item = _kbItems[index];
+  if (!item) return;
+  _kbDrawerPath = item.path;
+  await kbDrawerTogglePublic();
 }
 
 // ---------- 状态（已读 / 收藏） ----------
@@ -539,8 +603,13 @@ function kbFillDrawer(item, detail) {
   }
   var source = detail || item;
   if (actions) {
+    var isPublic = !!item.public;
     actions.innerHTML =
       '<a class="kb-btn kb-btn-primary" href="' + escAttr('reports/' + item.path) + '" target="_blank" rel="noopener">打开原文 ↗</a>' +
+      '<button type="button" class="kb-btn kb-btn-ghost' + (isPublic ? ' is-on' : '') + '" id="kb-drawer-public" ' +
+        'aria-pressed="' + (isPublic ? 'true' : 'false') + '" onclick="kbDrawerTogglePublic()" ' +
+        'title="公开后可用外链分享，无需 DSH 账号">' + (isPublic ? '◉ 已公开' : '◌ 公开') + '</button>' +
+      (isPublic ? '<button type="button" class="kb-btn kb-btn-ghost" id="kb-drawer-copy" onclick="kbCopyPublicLink()">复制链接</button>' : '') +
       '<button type="button" class="kb-btn kb-btn-ghost" id="kb-drawer-star" aria-pressed="' +
         (item.starred ? 'true' : 'false') + '" onclick="kbDrawerToggleStar()">' +
         (item.starred ? '★ 已收藏' : '☆ 收藏') + '</button>' +
