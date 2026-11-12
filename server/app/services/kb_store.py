@@ -551,6 +551,22 @@ def set_ai_error(path: str, message: str) -> None:
 # ---------- P2：语义向量与混合检索 ----------
 
 
+def overview() -> dict:
+    """健康检查用的轻量统计：一条聚合查询，不读正文、不触发模型。"""
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS total, "
+            "COALESCE(SUM(read = 0), 0) AS unread, "
+            "COALESCE(SUM(starred = 1), 0) AS starred, "
+            "COALESCE(SUM(public = 1), 0) AS public FROM reports"
+        ).fetchone()
+    finally:
+        conn.close()
+    data = {key: int(row[key] or 0) for key in ("total", "unread", "starred", "public")}
+    return data
+
+
 def embed_stats(model: str) -> dict:
     """向量覆盖情况（供 /api/kb/embed/stats）。"""
     conn = _connect()

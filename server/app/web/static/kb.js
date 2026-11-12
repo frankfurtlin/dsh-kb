@@ -14,6 +14,8 @@ var kbState = {
   category: '',
   series: '',
   date: '',
+  dateFrom: '',
+  dateTo: '',
   view: 'all',
   sort: 'date_desc',
   mode: 'hybrid',
@@ -63,7 +65,13 @@ function kbQuery() {
   if (kbState.q) params.set('q', kbState.q);
   if (kbState.category) params.set('category', kbState.category);
   if (kbState.series) params.set('series', kbState.series);
-  if (kbState.date) { params.set('date_from', kbState.date); params.set('date_to', kbState.date); }
+  if (kbState.date) {
+    params.set('date_from', kbState.date);
+    params.set('date_to', kbState.date);
+  } else {
+    if (kbState.dateFrom) params.set('date_from', kbState.dateFrom);
+    if (kbState.dateTo) params.set('date_to', kbState.dateTo);
+  }
   if (kbState.view !== 'all') params.set('view', kbState.view);
   if (kbState.sort !== 'date_desc') params.set('sort', kbState.sort);
   if (kbState.offset) params.set('offset', String(kbState.offset));
@@ -88,6 +96,7 @@ function kbInit() {
   kbBindKeys();
   kbLoadEmbedStatus();
   kbLoadPublicState();
+  kbSyncDateInputs();
   kbLoadTree();
   kbLoad();
 }
@@ -321,10 +330,52 @@ function kbSetSeries(series) {
   kbLoad();
 }
 
+function kbSyncDateInputs() {
+  var from = kbEl('kb-from');
+  var to = kbEl('kb-to');
+  if (from) from.value = kbState.dateFrom;
+  if (to) to.value = kbState.dateTo;
+}
+
 function kbSetDate(date) {
-  kbState.date = kbState.date === date ? '' : (date || '');
+  var next = kbState.date === date ? '' : (date || '');
+  kbState.date = next;
+  kbState.dateFrom = next;
+  kbState.dateTo = next;
+  kbSyncDateInputs();
   kbState.offset = 0;
   kbRenderDates();
+  kbRenderFilterbar();
+  kbLoad();
+}
+
+// 自定义日期区间：两个日期输入框 + 「应用」。只填一边也允许（半开区间）。
+function kbApplyDateRange() {
+  var fromEl = kbEl('kb-from');
+  var toEl = kbEl('kb-to');
+  var from = fromEl ? fromEl.value : '';
+  var to = toEl ? toEl.value : '';
+  if (from && to && from > to) {
+    showToast('起始日期不能晚于截止日期', 'error');
+    return;
+  }
+  kbState.date = '';
+  kbState.dateFrom = from;
+  kbState.dateTo = to;
+  kbState.offset = 0;
+  kbRenderDates();
+  kbRenderFilterbar();
+  kbLoad();
+}
+
+function kbClearDateRange() {
+  kbState.date = '';
+  kbState.dateFrom = '';
+  kbState.dateTo = '';
+  kbSyncDateInputs();
+  kbState.offset = 0;
+  kbRenderDates();
+  kbRenderFilterbar();
   kbLoad();
 }
 
@@ -363,6 +414,9 @@ function kbResetFilters() {
   kbState.category = '';
   kbState.series = '';
   kbState.date = '';
+  kbState.dateFrom = '';
+  kbState.dateTo = '';
+  kbSyncDateInputs();
   kbState.view = 'all';
   kbState.sort = 'date_desc';
   kbState.offset = 0;
@@ -392,6 +446,11 @@ function kbRenderFilterbar() {
   if (kbState.category) chips.push([kbState.category, 'kbClearCategory']);
   if (kbState.series) chips.push([kbState.series, 'kbClearSeries']);
   if (kbState.date) chips.push(['日期：' + kbFmtDate(kbState.date), 'kbResetDates']);
+  else if (kbState.dateFrom || kbState.dateTo) {
+    var rangeLabel = (kbState.dateFrom ? kbFmtDate(kbState.dateFrom) : '最早') + ' → ' +
+      (kbState.dateTo ? kbFmtDate(kbState.dateTo) : '最新');
+    chips.push(['日期：' + rangeLabel, 'kbClearDateRange']);
+  }
   if (kbState.view !== 'all') chips.push([kbState.view === 'unread' ? '仅未读' : (kbState.view === 'starred' ? '仅收藏' : '仅公开'), 'kbClearView']);
   if (!chips.length) {
     bar.classList.add('bl-hidden');

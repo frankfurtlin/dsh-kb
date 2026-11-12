@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{{ app_title }}</title>
 <meta name="theme-color" content="#5b5ef7">
-<link rel="icon" type="image/png" href="static/icon-192.png">
-<link rel="apple-touch-icon" href="static/icon-192.png">
+<link rel="icon" type="image/png" href="static/icon-192.png?v={{ asset_version }}">
+<link rel="apple-touch-icon" href="static/icon-192.png?v={{ asset_version }}">
 <!-- 所有资源一律相对路径：页面在 / 与 /kb/ 下都能正确解析，iframe 内不用绝对前缀。 -->
-<link rel="stylesheet" href="static/style.css">
+<link rel="stylesheet" href="static/style.css?v={{ asset_version }}">
 <script>
 /* 主题要在首次绘制前定下来：放到 ui.js 里再设的话，深色用户会先看到一帧白色。 */
 (function () {
@@ -21,9 +21,9 @@
 </script>
 <!-- 经典脚本共享全局词法作用域，加载顺序有依赖：
      core.js（API/safeFetch/esc/escAttr）→ ui.js（toast/离线条/主题）→ kb.js（知识库）。 -->
-<script src="static/core.js"></script>
-<script src="static/ui.js"></script>
-<script src="static/kb.js"></script>
+<script src="static/core.js?v={{ asset_version }}"></script>
+<script src="static/ui.js?v={{ asset_version }}"></script>
+<script src="static/kb.js?v={{ asset_version }}"></script>
 </head>
 <body>
 
@@ -78,6 +78,15 @@
 
     <div class="kb-sec">
       <div class="kb-sec-head">时间</div>
+      <div class="kb-range" role="group" aria-label="自定义日期区间">
+        <label class="kb-range-row"><span>从</span>
+          <input type="date" id="kb-from" class="kb-date-input" aria-label="起始日期">
+        </label>
+        <label class="kb-range-row"><span>到</span>
+          <input type="date" id="kb-to" class="kb-date-input" aria-label="截止日期">
+        </label>
+        <button type="button" class="kb-range-go" onclick="kbApplyDateRange()" title="按区间筛选">应用区间</button>
+      </div>
       <div class="kb-dates" id="kb-dates" role="group" aria-label="按日期筛选"></div>
     </div>
 
@@ -85,6 +94,7 @@
       <button type="button" class="kb-linkbtn" id="kb-refresh" onclick="kbRefresh()" title="重新扫描 reports/">
         重新扫描
       </button>
+      <span class="kb-side-version" id="kb-side-version">v{{ app_version }}</span>
       <span class="kb-side-hint" id="kb-side-hint"></span>
     </div>
   </aside>

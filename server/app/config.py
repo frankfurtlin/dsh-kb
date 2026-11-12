@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from pathlib import Path
 
@@ -16,6 +18,36 @@ PLUGIN_ROOT = SERVER_DIR.parent
 WEB_DIR = APP_DIR / "web"
 TEMPLATES_DIR = WEB_DIR / "templates"
 STATIC_DIR = WEB_DIR / "static"
+
+# 插件版本：从 package.json 读（dsh-kb 与 host 半同版本），用于页脚 / -v 头 / 健康检查。
+def _plugin_version() -> str:
+    try:
+        data = json.loads((PLUGIN_ROOT / "package.json").read_text(encoding="utf-8"))
+        return str(data.get("version") or "0.0.0")
+    except Exception:
+        return "0.0.0"
+
+
+APP_VERSION = _plugin_version()
+
+# 静态资源指纹：文件名 + mtime + 大小 的短 hash。
+# 模板里把 `?v=<ASSET_VERSION>` 拼到 css/js 上，配合 static 的 immutable 缓存：
+# 改了文件 → 指纹变 → 浏览器强制取新；没改 → 一直命中长缓存。
+def _asset_version() -> str:
+    digest = hashlib.sha1()
+    try:
+        for path in sorted(STATIC_DIR.glob("*")):
+            if not path.is_file():
+                continue
+            stat = path.stat()
+            digest.update(path.name.encode("utf-8"))
+            digest.update(f"{stat.st_mtime_ns}:{stat.st_size}".encode("ascii"))
+    except OSError:
+        return "dev"
+    return digest.hexdigest()[:8]
+
+
+ASSET_VERSION = _asset_version()
 
 DEFAULT_REPORTS_DIR = "/root/workspace/betterlife/reports"
 # 插件自己的索引库（SQLite：报告元数据 + 摘要/正文文本 + 已读/收藏状态）。

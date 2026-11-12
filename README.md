@@ -60,6 +60,20 @@ SQLite 索引库（摘要/正文缓存 + 已读/收藏 + 公开标记 + AI sidec
   - 公开页内链统一改写成 `/kb-public/...`，并带 `X-Robots-Tag: noindex, nofollow`。
   - 外链入口在 DSH 之外（hermes 站点 Caddy），因为 DSH 在路由分发前有全局匿名闸门。
 
+**工程化对齐（P0 / P1）**
+- **自定义日期区间**：侧栏「时间」下有起止两个 `date` 输入 + 「应用」，与老站的
+  `#kb-from/#kb-to` 等价；只填一边时是半开区间，起晚于止会 toast 提示拒绝；筛选条显示
+  `日期：起 → 止` 并可一键清除。快捷日期按钮仍然保留。
+- **静态资源版本与缓存**：模板给 css/js/icon 统一拼 `?v=<ASSET_VERSION>`（静态文件
+  名+mtime+大小的短 hash），带指纹的响应 `Cache-Control: public, max-age=31536000, immutable`；
+  不带指纹的只缓存 5 分钟，避免升级后长期拿到旧文件。HTML 本身 `no-cache`。
+- **健康检查**：`GET /healthz`（页面内也有 `/kb/healthz`）返回 `{ok, version, uptime_seconds,
+  reports:{total,unread,starred,public}, ai:{configured}, embed:{enabled,available}}`；
+  索引读不出来时返回 503 并带 `error`，不触发模型加载。
+- **统一错误体**：框架自产的 404/405/422 与业务 `HTTPException` 都收敛成
+  `{"ok": false, "error": "..."}`，前端只解析一种形状（报错定位到具体参数名）。
+- **压缩与长缓存**：`GZipMiddleware(minimum_size=500)`；静态资源的缓存头见上一条。
+
 ## 结构
 
 ```
@@ -164,6 +178,7 @@ host 半默认反代 `127.0.0.1:8816`；如需临时指向其它端口，可设
 | POST | `/api/kb/ask` | body `{question, limit?}` → `{ok, answer, citations, related, mode}`（未配置模型 503） |
 | GET | `/api/kb/digest?days=7&refresh=0` | 周报：`{ok, total, categories, series, tags, themes, overview, mode, cached}` |
 | POST | `/api/kb/state` | body `{path, read?, starred?}`，路径校验（禁止 `..`、只允许 .html/.htm） |
+| GET | `/healthz` | 健康检查：`{ok, version, uptime_seconds, reports, ai, embed}`（503 表示索引不可读） |
 | GET | `/api/kb/public` | 公开状态：`{ok, base, paths}` |
 | POST | `/api/kb/public` | body `{path, public}`：公开/取消公开 → `{ok, path, public, url}` |
 | GET | `/reports`、`/reports/{path:path}` | 报告正文；HTML 改写内链后返回 |
@@ -184,17 +199,18 @@ node verify-app.mjs      # 后端 + 页面端到端（Playwright 直连 http://1
 node verify-proxy.mjs    # host 半（lib/index.js）隔离验收，不需要装进 DSH
 ```
 
-最近一次结果（2026-11-12，P6 公开外链后）：
+最近一次结果（2026-11-12，P0/P1 工程化对齐后）：
 
-- `verify-app.mjs` **62/62 passed** —— 树/列表/检索/前缀反代/重定向；分类、系列、日期筛选；
-  标题与正文搜索高亮；排序与分页；详情抽屉（preview、自动已读、收藏、打开原文）；
-  AI sidecar 卡片/抽屉；向量与问答接口的降级路径；周报面板（概览/主题/统计）；公开开关
-  （公开/取消公开、公开视图、公开外链匿名 200、附件白名单、私有报告 404、越权路径 404）；
+- `verify-app.mjs` **73/73 passed** —— 树/列表/检索/前缀反代/重定向；分类、系列、快捷日期
+  与**自定义日期区间**（含倒置拒绝、筛选条、清除恢复）；健康检查、统一错误体、静态指纹
+  长缓存、无指纹短缓存、gzip；标题与正文搜索高亮；排序与分页；详情抽屉（preview、自动已读、
+  收藏、打开原文）；AI sidecar 卡片/抽屉；向量与问答接口的降级路径；周报面板（概览/主题/统计）；
+  公开开关（公开/取消公开、公开视图、公开外链匿名 200、附件白名单、私有报告 404、越权路径 404）；
   收藏/未读视图；移动端；无 JS 报错。
 - `verify-proxy.mjs` **11/11 passed** —— 导出与注册、`/kb/`、`/kb/api/kb`、`/kb/static/*`、
   AI 桥鉴权（无密钥/错密钥都按 404 隐藏）
   反代、`/kb?x=1 → 302 /kb/?x=1`、401/403 鉴权闸门、上游未启动时 502 中文提示。
-- `verify-dsh.mjs` **19/19 passed**（真实 DSH 面板内）—— 匿名 401、侧栏「知识库」行、
+- `verify-dsh.mjs` **18/18 passed**（真实 DSH 面板内；公开开关是状态自适应，初始已公开时会多 1 项）—— 匿名 401、侧栏「知识库」行、
   iframe `/kb/`、首屏卡片/计数/分类、搜索高亮、分类筛选、详情抽屉与自动已读、公开开关
   （抽屉按钮 / 复制链接按钮出现与消失，状态自适应）、AI 问答（真实调模型，答案 + 引用）、
   周报面板、无插件相关 console error。
@@ -206,7 +222,7 @@ AI 问答与周报要调模型（单次 20–40s），host 半对 `/kb/api/kb/as
 
 | 文件 | 内容 |
 | --- | --- |
-| `01-home.png` | 首屏：左导航（视图/分类/时间）+ 卡片列表 |
+| `01-home.png` | 首屏：左导航（视图/分类/时间 + 起止日期输入 + 版本号）+ 卡片列表 |
 | `02-nested.png` | 分类展开系列（Minecraft 版本 → 1.x 正式版 等） |
 | `03-search.png` | 搜索命中与高亮 |
 | `04-drawer.png` | 详情抽屉（摘要、打开原文、收藏、已读） |

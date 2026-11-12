@@ -138,6 +138,29 @@ async function main() {
     check('GET /api/kb/report/<path> 200 且含 preview',
       (await api('/api/kb/report/' + reportPath.split('/').map(encodeURIComponent).join('/'))).json?.item?.preview?.length > 40)
 
+    // ---------- P0/P1：健康检查 / 统一错误体 / 静态缓存与压缩 ----------
+    const health = await api('/healthz')
+    check('P0 GET /healthz 返回版本、统计与能力',
+      health.status === 200 && health.json?.ok === true && /^\d+\.\d+\.\d+/.test(health.json?.version || '') &&
+        health.json?.reports?.total > 0 && typeof health.json?.ai?.configured === 'boolean',
+      JSON.stringify(health.json).slice(0, 90))
+    const missing = await api('/reports/does-not-exist.html')
+    check('P1 未命中报告返回统一错误体',
+      missing.status === 404 && missing.json?.ok === false && typeof missing.json?.error === 'string',
+      JSON.stringify(missing.json))
+    const versioned = await fetch(`${ORIGIN}/static/kb.js?v=test1234`)
+    check('P0 带指纹的静态资源走 immutable 长缓存',
+      (versioned.headers.get('cache-control') || '').includes('immutable'),
+      versioned.headers.get('cache-control') || '(none)')
+    const plain = await fetch(`${ORIGIN}/static/kb.js`)
+    check('P0 无指纹的静态资源不给长缓存',
+      (plain.headers.get('cache-control') || '').includes('max-age=300'),
+      plain.headers.get('cache-control') || '(none)')
+    const gzipped = await fetch(`${ORIGIN}/api/kb?limit=20`, { headers: { 'accept-encoding': 'gzip' } })
+    check('P1 JSON 响应经 gzip 压缩',
+      (gzipped.headers.get('content-encoding') || '') === 'gzip',
+      gzipped.headers.get('content-encoding') || '(none)')
+
     // ---------- P1：AI sidecar（直接种进临时索引库，验收不依赖模型/网络） ----------
     const aiSeeded = await seedAi(reportPath, {
       summary_ai: '这是一条 AI 摘要：报告复盘了今日 A 股主要指数的涨跌与资金流向，并给出次日观察点。',
@@ -217,6 +240,9 @@ async function main() {
     check('页面标题包含「知识库」', (await page.title()).includes('知识库'), await page.title())
     const pageHtml = await page.content()
     check('页面 HTML 无 /mine/ 绝对路径残留', !pageHtml.includes('/mine/'))
+    check('P0 模板给静态资源加 ?v= 指纹', /static\/kb\.js\?v=[0-9a-f]{6,}/.test(pageHtml))
+    check('P0 侧栏显示插件版本号', /^v\d+\.\d+\.\d+$/.test((await page.locator('#kb-side-version').innerText()).trim()),
+      (await page.locator('#kb-side-version').innerText()).trim())
 
     // ---------- 层次导航 ----------
     const navCounts = await page.evaluate(() => ({
@@ -260,6 +286,30 @@ async function main() {
     check(`日期筛选 ${dateRow.date}`, (await page.locator('.kb-item').count()) === Math.min(dateApi.total, 20), `api=${dateApi.total}`)
     await page.click('#kb-dates .kb-date[data-date=""]')
     await page.waitForTimeout(300)
+
+    // 自定义日期区间：填两个日期 → 应用，卡片数应与 API 区间查询一致
+    const sortedDates = tree.dates.map((row) => row.date).filter(Boolean).sort()
+    const rangeFrom = sortedDates[0]
+    const rangeTo = sortedDates[sortedDates.length - 1]
+    await page.fill('#kb-from', rangeFrom)
+    await page.fill('#kb-to', rangeTo)
+    await page.click('.kb-range-go')
+    await page.waitForTimeout(500)
+    const rangeApi = (await api(`/api/kb?date_from=${rangeFrom}&date_to=${rangeTo}`)).json
+    check(`P0 自定义日期区间 ${rangeFrom} → ${rangeTo}`,
+      (await page.locator('.kb-item').count()) === Math.min(rangeApi.total, 20), `api=${rangeApi.total}`)
+    check('P0 区间筛选出现可清除的筛选条',
+      (await page.locator('#kb-filterbar').innerText()).includes('日期：'))
+    const badFrom = sortedDates[sortedDates.length - 1]
+    const badTo = sortedDates[0]
+    await page.fill('#kb-from', badFrom)
+    await page.fill('#kb-to', badTo)
+    await page.click('.kb-range-go')
+    await page.waitForTimeout(300)
+    check('P0 起止日期倒置时拒绝筛选并提示', (await page.locator('.bl-toast').innerText()).includes('起始日期'))
+    await page.click('#kb-filterbar .kb-chip:has-text("日期：")')
+    await page.waitForTimeout(400)
+    check('P0 清除区间后恢复全量', (await page.locator('.kb-item').count()) === Math.min(tree.total, 20))
 
     // ---------- 检索 ----------
     await page.fill('#kb-search', '铝业')

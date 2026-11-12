@@ -19,8 +19,12 @@ import logging
 import threading
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import config
 from app.api.routes import kb as kb_routes
@@ -101,6 +105,45 @@ app = FastAPI(
     openapi_url=None,
     lifespan=lifespan,
 )
+
+# 大响应压缩（kb.js 33KB、报告正文/JSON 列表），跳过小响应。
+app.add_middleware(GZipMiddleware, minimum_size=500)
+
+
+# 静态资源缓存策略：模板里的 URL 带 ?v=<ASSET_VERSION> 指纹，命中长缓存；
+# 不带指纹的（直连调试、旧链接）只缓存 5 分钟，避免升级后长期拿到旧 JS/CSS。
+_STATIC_PREFIXES = ("/static/", f"{ROUTE_PREFIX}/static/")
+
+
+@app.middleware("http")
+async def static_cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if any(path.startswith(prefix) for prefix in _STATIC_PREFIXES):
+        if request.query_params.get("v"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            response.headers["Cache-Control"] = "public, max-age=300"
+    return response
+
+
+# 统一错误体：框架自产的 404/405/422 与路由里的 HTTPException 都收敛成
+# {"ok": false, "error": "..."}，前端只解析一种形状（老站 errors.register 的做法）。
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(_request: Request, exc: StarletteHTTPException):
+    detail = exc.detail if isinstance(exc.detail, str) and exc.detail else "请求失败"
+    return JSONResponse({"ok": False, "error": detail}, status_code=exc.status_code)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(_request: Request, exc: RequestValidationError):
+    first = (exc.errors() or [{}])[0]
+    where = ".".join(str(part) for part in first.get("loc", ())[1:]) or "参数"
+    return JSONResponse(
+        {"ok": False, "error": f"参数不合法：{where}"},
+        status_code=422,
+    )
+
 
 # 静态资源两份挂载（先于路由注册，避免被前缀路由吞掉）。
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="kb-static-root")
