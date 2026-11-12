@@ -103,6 +103,10 @@ server/app/
   api/routes/public_site.py P6：匿名只读站 /kb-public/ 与 /kb-public/reports/<path>
   web/templates/index.html  知识库页面（左导航 + 列表 + 抽屉）
   web/static/               style.css / core.js / ui.js / kb.js / icon-192.png
+  tests/                    pytest：索引/检索/状态、公开外链、P0/P1 基础设施（28 项）
+requirements.txt            后端依赖（fastapi/uvicorn/jinja2/httpx/numpy/fastembed/onnxruntime）
+requirements-dev.txt        开发依赖（pytest）
+pytest.ini                  pytest 配置（testpaths=tests）
 verification/verify-app.mjs   后端 + 页面端到端验收（Playwright 直连 8916，自带启动/清理）
 verification/verify-proxy.mjs host 半隔离验收（mock ctx，不用装进 DSH）
 verification/verify-dsh.mjs   真实 DSH 面板内验收（Playwright + launch token）
@@ -194,6 +198,11 @@ iframe 内使用 `/kb/` 这一套。
 `verify-app.mjs` 会把 `KB_DATA_DIR` 指向临时目录，不污染生产索引。
 
 ```bash
+# 单元/接口测试（自带临时 reports + 临时索引库，不碰生产数据）
+cd /root/workspace/plugins/dsh-kb/server
+../.venv/bin/python -m pytest        # 28 passed
+
+# 端到端验收
 cd /root/workspace/plugins/dsh-kb/verification
 node verify-app.mjs      # 后端 + 页面端到端（Playwright 直连 http://127.0.0.1:8916）
 node verify-proxy.mjs    # host 半（lib/index.js）隔离验收，不需要装进 DSH
@@ -201,6 +210,10 @@ node verify-proxy.mjs    # host 半（lib/index.js）隔离验收，不需要装
 
 最近一次结果（2026-11-12，P0/P1 工程化对齐后）：
 
+- `pytest` **28 passed** —— 索引同步与分类/系列/日期派生、列表筛选（分类/系列/日期区间/
+  半开区间/分页/排序）、标题与正文检索（snippet/match）、详情 preview、已读/收藏往返、
+  非法路径 400、公开外链（外链生成、匿名 200、内链改写、附件白名单、目录页、越权 404、
+  取消公开立即生效）、P0/P1（指纹缓存、gzip、统一错误体、healthz、版本号）。
 - `verify-app.mjs` **73/73 passed** —— 树/列表/检索/前缀反代/重定向；分类、系列、快捷日期
   与**自定义日期区间**（含倒置拒绝、筛选条、清除恢复）；健康检查、统一错误体、静态指纹
   长缓存、无指纹短缓存、gzip；标题与正文搜索高亮；排序与分页；详情抽屉（preview、自动已读、

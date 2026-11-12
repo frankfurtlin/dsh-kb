@@ -1,0 +1,12 @@
+# dsh-kb 后端运行依赖（pin 到当前 venv 实测版本）。
+# 安装：python3.11 -m venv .venv && .venv/bin/pip install -r server/requirements.txt
+# 可选能力：
+#   - fastembed / onnxruntime 缺失 → 语义检索自动降级为关键词检索；
+#   - numpy 缺失 → 混合检索不可用（同样降级）。
+fastapi==0.162.0
+uvicorn==0.54.0
+Jinja2==3.1.6
+httpx==0.28.1
+numpy==2.4.6
+fastembed==0.9.1
+onnxruntime==1.31.1

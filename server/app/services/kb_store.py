@@ -238,6 +238,19 @@ def _row_to_item(row: sqlite3.Row) -> dict:
     }
 
 
+def _norm_date(value: str) -> str:
+    """把 `20260101` / `2026.01.01` / `2026-01-01` 统一成索引里存的 `2026-01-01`。
+
+    索引日期列是 ISO 形态（目录名 20260101 → 2026-01-01），字符串比较才有序；
+    调用方可能传 8 位（老链接、脚本）或 ISO（日期输入框），这里统一收口。
+    """
+    digits = "".join(ch for ch in (value or "") if ch.isdigit())
+    if len(digits) < 8:
+        return ""
+    d = digits[:8]
+    return f"{d[:4]}-{d[4:6]}-{d[6:8]}"
+
+
 def list_reports(
     q: str = "",
     category: str = "",
@@ -261,6 +274,8 @@ def list_reports(
     if series:
         where.append("series = ?")
         params.append(series)
+    date_from = _norm_date(date_from)
+    date_to = _norm_date(date_to)
     if date_from:
         where.append("date >= ?")
         params.append(date_from)
@@ -634,6 +649,8 @@ def vectors_snapshot(
     if series:
         where.append("series = ?")
         params.append(series)
+    date_from = _norm_date(date_from)
+    date_to = _norm_date(date_to)
     if date_from:
         where.append("date >= ?")
         params.append(date_from)
