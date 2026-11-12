@@ -69,3 +69,10 @@ def test_validation_error_is_localized(client):
     body = response.json()
     assert body["ok"] is False
     assert body["error"].startswith("参数不合法")
+
+
+def test_process_time_header(client):
+    response = client.get("/api/kb/tree")
+    assert response.status_code == 200
+    value = float(response.headers["x-process-time"])
+    assert 0 <= value < 5000

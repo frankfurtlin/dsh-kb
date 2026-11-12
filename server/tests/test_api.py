@@ -108,3 +108,34 @@ def test_hybrid_search_falls_back_to_lexical_without_vectors(client):
     body = client.get("/api/kb/search", params={"q": "铝业", "mode": "hybrid"}).json()
     assert body["total"] == 1
     assert body["mode"] in ("lexical", "hybrid")  # 向量未启用时降级，但不能报错
+
+
+def test_tree_counts_follow_filters(client):
+    hit = client.get("/api/kb/tree", params={"q": "铝业"}).json()
+    assert hit["total"] == 1
+    assert {row["name"]: row["count"] for row in hit["categories"]} == {"个股分析": 1}
+    # 日期导航跟随关键词，但不按日期过滤（否则选完某天就看不到其它日期）
+    assert [row["date"] for row in hit["dates"]] == ["2025-12-31"]
+
+    window = client.get(
+        "/api/kb/tree", params={"date_from": "2026-01-01", "date_to": "2026-01-31"}
+    ).json()
+    assert window["total"] == 2
+    assert {row["name"]: row["count"] for row in window["categories"]} == {
+        "市场全景": 1,
+        "话题精读": 1,
+    }
+    assert len(window["dates"]) == 3
+
+    by_category = client.get("/api/kb/tree", params={"category": "市场全景"}).json()
+    assert [row["name"] for row in by_category["series"]] == ["A股市场全景"]
+    # 分类本身不参与分类计数过滤，其它分类仍可见
+    assert {row["name"] for row in by_category["categories"]} == {"市场全景", "话题精读", "个股分析"}
+
+
+def test_tree_view_counts_follow_view(client):
+    client.post("/api/kb/state", json={"path": "20260101/a-share-report.html", "read": True})
+    unread = client.get("/api/kb/tree", params={"view": "unread"}).json()
+    assert unread["total"] == 2
+    assert unread["unread"] == 2
+    assert unread["starred"] == 0

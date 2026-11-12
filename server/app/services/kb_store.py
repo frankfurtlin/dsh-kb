@@ -331,40 +331,96 @@ def recent_reports(since_date: str = "", limit: int = 0) -> list[dict]:
     return items[:limit] if limit and limit > 0 else items
 
 
-def tree() -> dict:
+def _filter_clause(
+    q: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    view: str = "all",
+    *,
+    include_dates: bool = True,
+) -> tuple[str, list[object]]:
+    """把列表筛选条件拼成 WHERE，供 tree() 统计「当前筛选下的」计数。"""
+    keyword = (q or "").strip()
+    where: list[str] = []
+    params: list[object] = []
+    if keyword:
+        where.append("(title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')")
+        params.extend([_like(keyword), _like(keyword)])
+    if include_dates:
+        df, dt = _norm_date(date_from), _norm_date(date_to)
+        if df:
+            where.append("date >= ?")
+            params.append(df)
+        if dt:
+            where.append("date <= ?")
+            params.append(dt)
+    if view == "unread":
+        where.append("read = 0")
+    elif view == "starred":
+        where.append("starred = 1")
+    elif view == "public":
+        where.append("public = 1")
+    return (" AND ".join(where) or "1 = 1"), params
+
+
+def tree(
+    q: str = "",
+    category: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    view: str = "all",
+) -> dict:
+    """层次导航树。
+
+    category/date/q/view 传入时，分类计数反映当前筛选（老站行为：搜索或选日期后
+    分类数字跟着收敛）；series 只统计当前选中分类；时间列表按 q/view 过滤但不按
+    日期过滤，否则选完某天就看不到其它日期了。
+    """
+    clause, params = _filter_clause(q, date_from, date_to, view)
+    date_clause, date_params = _filter_clause(q, date_from, date_to, view, include_dates=False)
     conn = _connect()
     try:
-        total = conn.execute("SELECT COUNT(*) FROM reports").fetchone()[0]
-        unread = conn.execute("SELECT COUNT(*) FROM reports WHERE read = 0").fetchone()[0]
-        starred = conn.execute("SELECT COUNT(*) FROM reports WHERE starred = 1").fetchone()[0]
-        public = conn.execute("SELECT COUNT(*) FROM reports WHERE public = 1").fetchone()[0]
+        total = conn.execute(f"SELECT COUNT(*) AS n FROM reports WHERE {clause}", params).fetchone()["n"]
+        read_count = conn.execute(
+            f"SELECT COUNT(*) AS n FROM reports WHERE {clause} AND read = 1", params
+        ).fetchone()["n"]
+        counts = {
+            key: conn.execute(f"SELECT COUNT(*) AS n FROM reports WHERE {clause} AND {key} = 1", params).fetchone()["n"]
+            for key in ("read", "starred", "public")
+        }
         categories = [
             {"name": row["name"], "count": row["count"]}
             for row in conn.execute(
-                "SELECT category AS name, COUNT(*) AS count FROM reports GROUP BY category ORDER BY count DESC"
+                f"SELECT category AS name, COUNT(*) AS count FROM reports WHERE {clause} "
+                "GROUP BY category ORDER BY count DESC",
+                params,
             )
         ]
+        series_clause = clause + (" AND category = ?" if category else "")
+        series_params = params + ([category] if category else [])
         series = [
             {"category": row["category"], "name": row["series"], "count": row["count"]}
             for row in conn.execute(
-                "SELECT category, series, COUNT(*) AS count FROM reports WHERE series != '' "
-                "GROUP BY category, series ORDER BY category, count DESC"
+                f"SELECT category, series, COUNT(*) AS count FROM reports WHERE {series_clause} AND series != '' "
+                "GROUP BY category, series ORDER BY category, count DESC",
+                series_params,
             )
         ]
         dates = [
             {"date": row["date"], "count": row["count"]}
             for row in conn.execute(
-                "SELECT date, COUNT(*) AS count FROM reports WHERE date != '' "
-                "GROUP BY date ORDER BY date DESC LIMIT 200"
+                f"SELECT date, COUNT(*) AS count FROM reports WHERE {date_clause} AND date != '' "
+                "GROUP BY date ORDER BY date DESC LIMIT 200",
+                date_params,
             )
         ]
     finally:
         conn.close()
     return {
         "total": int(total),
-        "unread": int(unread),
-        "starred": int(starred),
-        "public": int(public),
+        "unread": int(total) - int(read_count),
+        "starred": int(counts["starred"]),
+        "public": int(counts["public"]),
         "categories": categories,
         "series": series,
         "dates": dates,

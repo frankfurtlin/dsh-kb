@@ -74,6 +74,16 @@ SQLite 索引库（摘要/正文缓存 + 已读/收藏 + 公开标记 + AI sidec
   `{"ok": false, "error": "..."}`，前端只解析一种形状（报错定位到具体参数名）。
 - **压缩与长缓存**：`GZipMiddleware(minimum_size=500)`；静态资源的缓存头见上一条。
 
+**细节打磨（P2 部分）**
+- **筛选态计数**：`/api/kb/tree` 接受 `q/category/date_from/date_to/view`，左导航的分类
+  数字随搜索/日期/视图收敛（老站行为），时间列表跟随关键词但不按日期过滤；选中分类时
+  只统计该分类下的系列。前端在搜索、日期、视图、分类变化时都会重新拉树。
+- **观测性**：每个响应带 `X-Process-Time`（毫秒）；超过 `KB_SLOW_REQUEST_MS`（默认 300ms）
+  记一条 `[slow]` warning 日志，便于排查「面板卡住」。
+- **老站公开状态迁移**：`python -m app.cli_import_kb_public`（可 `--dry-run`）把
+  `betterlife/data/kb_public.json` 里 `public: true` 且仍存在的报告导入 SQLite，幂等；
+  已用它恢复了老站原有的 3 篇公开报告。
+
 ## 结构
 
 ```
@@ -97,13 +107,14 @@ server/app/
   services/kb_digest.py     P5：周报 / 主题聚合（带按天缓存）
   services/kb_public.py     P6：公开标记 + 匿名可访问附件白名单
   cli_enrich.py             批量补 AI sidecar 的 CLI（Hermes 写完报告可调用）
+  cli_import_kb_public.py   老站公开状态迁移 CLI（幂等，支持 --dry-run）
   api/routes/pages.py       GET /（Jinja2 模板）
   api/routes/kb.py          GET /api/kb、/api/kb/tree、/api/kb/search、/api/kb/report/<path>、POST /api/kb/state
   api/routes/reports.py     GET /reports、/reports/、/reports/{path:path}
   api/routes/public_site.py P6：匿名只读站 /kb-public/ 与 /kb-public/reports/<path>
   web/templates/index.html  知识库页面（左导航 + 列表 + 抽屉）
   web/static/               style.css / core.js / ui.js / kb.js / icon-192.png
-  tests/                    pytest：索引/检索/状态、公开外链、P0/P1 基础设施（28 项）
+  tests/                    pytest：索引/检索/状态、公开外链与老站迁移、P0/P1 基础设施（33 项）
 requirements.txt            后端依赖（fastapi/uvicorn/jinja2/httpx/numpy/fastembed/onnxruntime）
 requirements-dev.txt        开发依赖（pytest）
 pytest.ini                  pytest 配置（testpaths=tests）
@@ -171,7 +182,7 @@ host 半默认反代 `127.0.0.1:8816`；如需临时指向其它端口，可设
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/api/kb` | 列表：`q`、`category`、`series`、`date_from`、`date_to`、`view=unread|starred`、`sort=date_desc|date_asc|title|updated`、`offset`、`limit`（≤500）、`refresh=1` → `{items, total, scan_total}`；`q` 命中时 item 附 `snippet`/`match` |
-| GET | `/api/kb/tree` | 导航树：`{total, unread, starred, categories, series, dates, scan_total}` |
+| GET | `/api/kb/tree` | 导航树：`{total, unread, starred, public, categories, series, dates, scan_total}`；接受 `q/category/date_from/date_to/view`，计数随筛选收敛 |
 | GET | `/api/kb/search?q=` | 与列表相同的检索，返回 `{q, items, total}` |
 | GET | `/api/kb/search?q=&mode=` | 混合检索：`mode=auto|hybrid|lexical`；返回 `{q, items, total, mode}`，item 带 `score/semantic_score/match/snippet` |
 | GET | `/api/kb/report/{path:path}` | 单篇 `{item}`（含 `preview` 前 1200 字、AI 摘要/要点/标签/实体）；不存在 404 |
@@ -200,7 +211,7 @@ iframe 内使用 `/kb/` 这一套。
 ```bash
 # 单元/接口测试（自带临时 reports + 临时索引库，不碰生产数据）
 cd /root/workspace/plugins/dsh-kb/server
-../.venv/bin/python -m pytest        # 28 passed
+../.venv/bin/python -m pytest        # 33 passed
 
 # 端到端验收
 cd /root/workspace/plugins/dsh-kb/verification
@@ -210,16 +221,17 @@ node verify-proxy.mjs    # host 半（lib/index.js）隔离验收，不需要装
 
 最近一次结果（2026-11-12，P0/P1 工程化对齐后）：
 
-- `pytest` **28 passed** —— 索引同步与分类/系列/日期派生、列表筛选（分类/系列/日期区间/
+- `pytest` **33 passed** —— 索引同步与分类/系列/日期派生、列表筛选（分类/系列/日期区间/
   半开区间/分页/排序）、标题与正文检索（snippet/match）、详情 preview、已读/收藏往返、
-  非法路径 400、公开外链（外链生成、匿名 200、内链改写、附件白名单、目录页、越权 404、
-  取消公开立即生效）、P0/P1（指纹缓存、gzip、统一错误体、healthz、版本号）。
-- `verify-app.mjs` **73/73 passed** —— 树/列表/检索/前缀反代/重定向；分类、系列、快捷日期
+  非法路径 400、筛选态树计数、公开外链（外链生成、匿名 200、内链改写、附件白名单、
+  目录页、越权 404、取消公开立即生效、老站公开状态迁移）、P0/P1（指纹缓存、gzip、
+  统一错误体、healthz、版本号、X-Process-Time）。
+- `verify-app.mjs` **74/74 passed** —— 树/列表/检索/前缀反代/重定向；分类、系列、快捷日期
   与**自定义日期区间**（含倒置拒绝、筛选条、清除恢复）；健康检查、统一错误体、静态指纹
   长缓存、无指纹短缓存、gzip；标题与正文搜索高亮；排序与分页；详情抽屉（preview、自动已读、
   收藏、打开原文）；AI sidecar 卡片/抽屉；向量与问答接口的降级路径；周报面板（概览/主题/统计）；
   公开开关（公开/取消公开、公开视图、公开外链匿名 200、附件白名单、私有报告 404、越权路径 404）；
-  收藏/未读视图；移动端；无 JS 报错。
+  收藏/未读视图；筛选态分类计数收敛；移动端；无 JS 报错。
 - `verify-proxy.mjs` **11/11 passed** —— 导出与注册、`/kb/`、`/kb/api/kb`、`/kb/static/*`、
   AI 桥鉴权（无密钥/错密钥都按 404 隐藏）
   反代、`/kb?x=1 → 302 /kb/?x=1`、401/403 鉴权闸门、上游未启动时 502 中文提示。

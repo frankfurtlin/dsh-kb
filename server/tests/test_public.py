@@ -89,3 +89,36 @@ def test_publish_rejects_bad_paths(client):
     assert bad.json()["ok"] is False
     missing = client.post("/api/kb/public", json={"path": "20260101/nope.html", "public": True})
     assert missing.status_code == 404
+
+
+def test_import_legacy_state(tmp_path, client):
+    import json
+
+    legacy = tmp_path / "kb_public.json"
+    legacy.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "items": {
+                    REPORT: {"public": True, "updated_at": 1},
+                    "20260101/gone.html": {"public": True, "updated_at": 1},
+                    PRIVATE_REPORT: {"public": False, "updated_at": 1},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    from app.services import kb_public, kb_store
+
+    result = kb_public.import_legacy_state(str(legacy))
+    assert result["imported"] == 1
+    assert result["missing"] == 1
+    assert REPORT in kb_store.public_paths()
+    assert client.get(f"/kb-public/reports/{REPORT}").status_code == 200
+
+
+def test_import_legacy_state_missing_file():
+    from app.services import kb_public
+
+    result = kb_public.import_legacy_state("/nonexistent/kb_public.json")
+    assert "error" in result

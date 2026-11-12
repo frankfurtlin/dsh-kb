@@ -49,9 +49,18 @@ def list_kb(
 
 
 @router.get("/kb/tree")
-def kb_tree(refresh: bool = False) -> dict:
+def kb_tree(
+    q: str = "",
+    category: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    view: str = "all",
+    refresh: bool = False,
+) -> dict:
     stats = kb_store.sync(force=refresh)
-    payload = kb_store.tree()
+    payload = kb_store.tree(
+        q=q, category=category, date_from=date_from, date_to=date_to, view=view
+    )
     payload["scan_total"] = stats["scan_total"]
     return payload
 

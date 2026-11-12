@@ -317,6 +317,10 @@ async function main() {
     const searchApi = (await api('/api/kb?q=' + encodeURIComponent('铝业'))).json
     check('标题搜索「铝业」结果一致且高亮', (await page.locator('.kb-item').count()) === Math.min(searchApi.total, 20) &&
       (await page.locator('.kb-item mark').count()) > 0, `api=${searchApi.total}`)
+    const filteredTree = (await api(`/api/kb/tree?q=${encodeURIComponent('铝业')}`)).json
+    const filteredAll = (await page.locator('#kb-cats .kb-cat[data-cat=""] .kb-cat-n').innerText()).trim()
+    check('筛选态分类计数随搜索收敛', filteredAll === String(filteredTree.total),
+      `ui=${filteredAll} api=${filteredTree.total}`)
     await shot(page, '03-search.png', true)
 
     const bodyQuery = '资产负债率'

@@ -224,3 +224,42 @@ def public_reports() -> list[dict]:
     """公开站点首页用的报告列表（按日期倒序）。"""
     items, _ = kb_store.list_reports(view="public", sort="date_desc")
     return items
+
+
+def import_legacy_state(path: str) -> dict:
+    """把老站 betterlife 的 data/kb_public.json 导入本插件（幂等）。
+
+    老站状态结构：{"version":1,"items":{rel:{"public":true,"updated_at":ts}}}。
+    只处理 public=true 且报告仍存在的条目；返回 {imported, skipped, missing}，
+    便于 CLI 打印和测试。
+    """
+    import json
+    from pathlib import Path
+
+    source = Path(path)
+    result = {"imported": 0, "skipped": 0, "missing": 0, "file": str(source)}
+    if not source.is_file():
+        result["error"] = "文件不存在"
+        return result
+    try:
+        data = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"[:200]
+        return result
+    items = data.get("items") or {}
+    if not isinstance(items, dict):
+        result["error"] = "items 不是对象"
+        return result
+    for rel, meta in items.items():
+        if not isinstance(meta, dict) or not meta.get("public"):
+            continue
+        normalized = normalize_rel(rel)
+        if not normalized or not is_report_rel(normalized):
+            result["skipped"] += 1
+            continue
+        if not report_exists(normalized):
+            result["missing"] += 1
+            continue
+        set_public(normalized, True)
+        result["imported"] += 1
+    return result

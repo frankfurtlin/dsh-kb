@@ -159,8 +159,26 @@ function kbBindKeys() {
 
 // ---------- 左导航（树 / 计数） ----------
 
+function kbTreeParams() {
+  var params = new URLSearchParams();
+  if (kbState.q) params.set('q', kbState.q);
+  if (kbState.category) params.set('category', kbState.category);
+  if (kbState.view !== 'all') params.set('view', kbState.view);
+  if (kbState.date) {
+    params.set('date_from', kbState.date);
+    params.set('date_to', kbState.date);
+  } else {
+    if (kbState.dateFrom) params.set('date_from', kbState.dateFrom);
+    if (kbState.dateTo) params.set('date_to', kbState.dateTo);
+  }
+  return params;
+}
+
 async function kbLoadTree(force) {
-  var url = API + '/kb/tree' + (force ? '?refresh=1' : '');
+  var params = kbTreeParams();
+  if (force) params.set('refresh', '1');
+  var query = params.toString();
+  var url = API + '/kb/tree' + (query ? '?' + query : '');
   var data = await safeFetch(url);
   if (!data) return;
   _kbTree = data;
@@ -346,6 +364,7 @@ function kbSetDate(date) {
   kbState.offset = 0;
   kbRenderDates();
   kbRenderFilterbar();
+  kbLoadTree();
   kbLoad();
 }
 
@@ -365,6 +384,7 @@ function kbApplyDateRange() {
   kbState.offset = 0;
   kbRenderDates();
   kbRenderFilterbar();
+  kbLoadTree();
   kbLoad();
 }
 
@@ -376,13 +396,14 @@ function kbClearDateRange() {
   kbState.offset = 0;
   kbRenderDates();
   kbRenderFilterbar();
+  kbLoadTree();
   kbLoad();
 }
 
 function kbSetView(view) {
   kbState.view = view;
   kbState.offset = 0;
-  kbRenderCounts();
+  kbLoadTree();
   kbLoad();
 }
 
@@ -399,6 +420,7 @@ function kbOnSearch(value) {
   clearTimeout(_kbTimer);
   _kbTimer = setTimeout(function () {
     kbState.offset = 0;
+    kbLoadTree();
     kbLoad();
   }, 250);
 }

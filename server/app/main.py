@@ -16,7 +16,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -108,6 +110,24 @@ app = FastAPI(
 
 # 大响应压缩（kb.js 33KB、报告正文/JSON 列表），跳过小响应。
 app.add_middleware(GZipMiddleware, minimum_size=500)
+
+
+# 慢请求阈值：超过就记一条 warning 日志，给排查「面板卡住」留线索。
+SLOW_REQUEST_MS = float(os.environ.get("KB_SLOW_REQUEST_MS", "300"))
+http_logger = logging.getLogger("dsh-kb.http")
+
+
+@app.middleware("http")
+async def process_time_header(request: Request, call_next):
+    started = time.perf_counter()
+    response = await call_next(request)
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    response.headers["X-Process-Time"] = f"{elapsed_ms:.1f}"
+    if elapsed_ms >= SLOW_REQUEST_MS:
+        http_logger.warning(
+            "[slow] %s %s %s %.1fms", request.method, request.url.path, response.status_code, elapsed_ms
+        )
+    return response
 
 
 # 静态资源缓存策略：模板里的 URL 带 ?v=<ASSET_VERSION> 指纹，命中长缓存；
