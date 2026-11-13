@@ -268,6 +268,10 @@ AI 问答与周报要调模型（单次 20–40s），host 半对 `/kb/api/kb/as
 | `09-dsh-digest.png` | 真实 DSH 面板内的周报视图（`verify-dsh.mjs`） |
 | `10-dsh-ask.png` | 真实 DSH 面板内的 AI 问答（答案 + 引用，`verify-dsh.mjs`） |
 | `11-dsh-public.png` | 真实 DSH 面板内：抽屉里的「公开 / 已公开」与「复制链接」（`verify-dsh.mjs`） |
+| `14-history.png` | 搜索历史下拉（`verify-app.mjs`） |
+| `15-saved-filter.png` | 已保存筛选的套用与删除（`verify-app.mjs`） |
+| `16-batch.png` | 生产页：批量模式（勾选 3 篇 + 批量条） |
+| `17-history-saved.png` | 生产页：搜索历史 + 左导航「已保存」 |
 
 语法门：`node --check lib/index.js && node --check client.js && node --check verification/verify-app.mjs && node --check verification/verify-proxy.mjs`；
 Python 用 `/usr/bin/python3.11 -m py_compile $(find server -name '*.py')`。

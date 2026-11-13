@@ -1158,7 +1158,10 @@ function kbBindHistory() {
   if (!input || !box) return;
   input.addEventListener('focus', function () { kbRenderHistory(); });
   input.addEventListener('blur', function () {
-    setTimeout(function () { box.classList.add('bl-hidden'); }, 180);
+    setTimeout(function () {
+      if (document.activeElement === input) return;
+      box.classList.add('bl-hidden');
+    }, 180);
   });
 }
 
