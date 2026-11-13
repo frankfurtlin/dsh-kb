@@ -941,3 +941,112 @@ a { color: var(--kb-accent-text); }
 }
 .kb-range-go:hover { background: var(--kb-accent); color: #fff; }
 .kb-side-version { font-size: 11px; color: var(--kb-text-3); padding-left: 4px; }
+
+
+/* ---------- 批量操作 / 搜索历史 / 已保存筛选 ---------- */
+
+.kb-check {
+  width: 15px;
+  height: 15px;
+  margin: 0 2px 0 0;
+  accent-color: var(--kb-accent);
+  flex: none;
+  cursor: pointer;
+}
+
+.kb-item.is-selecting .kb-item-title .kb-item-open { cursor: pointer; }
+.kb-item.is-selected {
+  border-color: var(--kb-accent);
+  box-shadow: inset 3px 0 0 var(--kb-accent);
+}
+
+.kb-batchbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0 2px;
+  padding: 8px 12px;
+  border: 1px solid var(--kb-accent);
+  border-radius: 10px;
+  background: var(--kb-panel);
+}
+
+.kb-batch-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--kb-accent-text);
+  margin-right: 4px;
+}
+
+.kb-batchbar .kb-btn { padding: 5px 10px; font-size: 12px; }
+.kb-batchbar .kb-btn[disabled] { opacity: .45; cursor: not-allowed; }
+
+.kb-hist {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  padding: 6px;
+  border: 1px solid var(--kb-border);
+  border-radius: 10px;
+  background: var(--kb-panel);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, .14);
+  max-height: 264px;
+  overflow: auto;
+}
+
+.kb-hist-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.kb-hist-item {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--kb-text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-hist-item:hover { background: var(--kb-panel-2); }
+.kb-hist-del { flex: none; }
+
+.kb-saved-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.kb-saved-item {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--kb-text);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-saved-item:hover {
+  border-color: var(--kb-border);
+  background: var(--kb-panel-2);
+}
+
+.kb-saved-del { flex: none; }

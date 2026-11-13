@@ -122,3 +122,17 @@ def test_import_legacy_state_missing_file():
 
     result = kb_public.import_legacy_state("/nonexistent/kb_public.json")
     assert "error" in result
+
+
+def test_bulk_public(client):
+    body = client.post(
+        "/api/kb/bulk", json={"paths": [REPORT, PRIVATE_REPORT], "public": True}
+    ).json()
+    assert body["ok"] is True and body["updated"] == 2
+    listed = client.get("/api/kb/public").json()["paths"]
+    assert REPORT in listed and PRIVATE_REPORT in listed
+    assert client.get(f"/kb-public/reports/{PRIVATE_REPORT}").status_code == 200
+
+    body = client.post("/api/kb/bulk", json={"paths": [REPORT], "public": False}).json()
+    assert body["updated"] == 1
+    assert client.get(f"/kb-public/reports/{REPORT}").status_code == 404

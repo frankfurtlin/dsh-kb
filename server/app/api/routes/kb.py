@@ -138,6 +138,13 @@ def kb_report(path: str) -> dict:
     return {"item": item}
 
 
+class KbBulkBody(BaseModel):
+    paths: list[str] = []
+    read: bool | None = None
+    starred: bool | None = None
+    public: bool | None = None
+
+
 class KbStateBody(BaseModel):
     path: str
     read: bool | None = None
@@ -153,6 +160,29 @@ def kb_set_state(body: KbStateBody):
     if result is None:
         return _error(404, "报告不存在或尚未建立索引")
     return result
+
+
+@router.post("/kb/bulk")
+def kb_bulk(body: KbBulkBody):
+    """批量标记已读/收藏/公开（最多 500 篇，重复路径自动去重）。"""
+    if body.read is None and body.starred is None and body.public is None:
+        return _error(400, "没有要更新的字段")
+    if not body.paths:
+        return _error(400, "paths 不能为空")
+    if len(body.paths) > 500:
+        return _error(400, "一次最多批量更新 500 篇")
+    valid: list[str] = []
+    for raw in body.paths:
+        rel = (raw or "").strip().lstrip("/")
+        if not rel or ".." in rel.split("/") or not rel.lower().endswith((".html", ".htm")):
+            continue
+        valid.append(rel)
+    if not valid:
+        return _error(400, "无效的报告路径")
+    result = kb_store.bulk_update(
+        valid, read=body.read, starred=body.starred, public=body.public
+    )
+    return {"ok": True, **result}
 
 
 # ---------- P1：AI sidecar ----------

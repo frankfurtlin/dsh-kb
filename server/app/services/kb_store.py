@@ -514,6 +514,49 @@ def set_state(path: str, read: bool | None = None, starred: bool | None = None) 
 # ---------- P6：公开报告（对外只读共享） ----------
 
 
+def bulk_update(
+    paths: list[str],
+    read: bool | None = None,
+    starred: bool | None = None,
+    public: bool | None = None,
+) -> dict:
+    """批量更新多篇报告的已读/收藏/公开状态。
+
+    返回 {updated, missing, paths}；不存在的路径计入 missing。
+    """
+    assignments: list[str] = []
+    params: list[object] = []
+    if read is not None:
+        assignments.append("read = ?")
+        params.append(1 if read else 0)
+    if starred is not None:
+        assignments.append("starred = ?")
+        params.append(1 if starred else 0)
+    if public is not None:
+        assignments.append("public = ?")
+        params.append(1 if public else 0)
+    unique = list(dict.fromkeys(paths))
+    if not assignments or not unique:
+        return {"updated": 0, "missing": unique[:20], "paths": []}
+    placeholders = ",".join("?" for _ in unique)
+    conn = _connect()
+    try:
+        cursor = conn.execute(
+            f"UPDATE reports SET {', '.join(assignments)} WHERE path IN ({placeholders})",
+            [*params, *unique],
+        )
+        updated = cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+        rows = conn.execute(
+            f"SELECT path FROM reports WHERE path IN ({placeholders})", unique
+        ).fetchall()
+        conn.commit()
+    finally:
+        conn.close()
+    found = {row["path"] for row in rows}
+    missing = [path for path in unique if path not in found]
+    return {"updated": updated, "missing": missing[:20], "paths": [p for p in unique if p in found]}
+
+
 def public_paths() -> list[str]:
     """所有已标记公开的报告相对路径（按路径排序，结果稳定便于缓存）。"""
     conn = _connect()

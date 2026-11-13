@@ -139,3 +139,28 @@ def test_tree_view_counts_follow_view(client):
     assert unread["total"] == 2
     assert unread["unread"] == 2
     assert unread["starred"] == 0
+
+
+def test_bulk_update_read_and_star(client):
+    paths = ["20260101/a-share-report.html", "20260115/xhs-note.html"]
+    body = client.post("/api/kb/bulk", json={"paths": paths, "read": True, "starred": True}).json()
+    assert body["ok"] is True
+    assert body["updated"] == 2
+    assert body["missing"] == []
+
+    tree = client.get("/api/kb/tree").json()
+    assert tree["unread"] == 1
+    assert tree["starred"] == 2
+
+    # 重复路径与不存在路径
+    body = client.post(
+        "/api/kb/bulk",
+        json={"paths": paths + paths[:1] + ["20260101/nope.html"], "read": False},
+    ).json()
+    assert body["updated"] == 2
+    assert body["missing"] == ["20260101/nope.html"]
+    assert client.get("/api/kb/tree").json()["unread"] == 3
+
+    assert client.post("/api/kb/bulk", json={"paths": []}).status_code == 400
+    assert client.post("/api/kb/bulk", json={"paths": paths}).status_code == 400
+    assert client.post("/api/kb/bulk", json={"paths": ["../x.html"], "read": True}).status_code == 400

@@ -90,6 +90,11 @@
       <div class="kb-dates" id="kb-dates" role="group" aria-label="按日期筛选"></div>
     </div>
 
+    <div class="kb-sec bl-hidden" id="kb-saved-wrap">
+      <div class="kb-sec-head">已保存</div>
+      <div class="kb-saved" id="kb-saved" role="group" aria-label="已保存筛选"></div>
+    </div>
+
     <div class="kb-side-foot">
       <button type="button" class="kb-linkbtn" id="kb-refresh" onclick="kbRefresh()" title="重新扫描 reports/">
         重新扫描
@@ -108,6 +113,7 @@
         <button type="button" class="kb-search-clear bl-hidden" id="kb-search-clear"
                 onclick="kbClearSearch()" aria-label="清空搜索">✕</button>
         <kbd class="kb-kbd">⌘K</kbd>
+        <div class="kb-hist bl-hidden" id="kb-search-hist" role="listbox" aria-label="最近搜索"></div>
       </div>
       <div class="kb-mode" id="kb-mode" role="group" aria-label="检索方式">
         <button type="button" class="kb-mode-btn is-on" id="kb-mode-hybrid" data-mode="hybrid"
@@ -124,6 +130,10 @@
           <option value="updated">最近更新</option>
         </select>
       </label>
+      <button type="button" class="kb-btn kb-btn-quiet" id="kb-select-toggle"
+              aria-pressed="false" onclick="kbToggleSelectMode()">选择</button>
+      <button type="button" class="kb-btn kb-btn-quiet" id="kb-save-filter"
+              onclick="kbSaveFilter()">保存筛选</button>
       <div class="kb-result" id="kb-result" aria-live="polite"></div>
     </header>
 
@@ -157,6 +167,18 @@
     </section>
 
     <div class="kb-filterbar bl-hidden" id="kb-filterbar"></div>
+
+    <div class="kb-batchbar bl-hidden" id="kb-batchbar" role="region" aria-label="批量操作">
+      <span class="kb-batch-count" id="kb-batch-count">已选 0 篇</span>
+      <button type="button" class="kb-btn kb-btn-quiet" data-batch="all" onclick="kbBatchAction('all')">全选本页</button>
+      <button type="button" class="kb-btn kb-btn-quiet" data-batch="read" onclick="kbBatchAction('read')">标记已读</button>
+      <button type="button" class="kb-btn kb-btn-quiet" data-batch="star" onclick="kbBatchAction('star')">收藏</button>
+      <button type="button" class="kb-btn kb-btn-quiet" data-batch="public" onclick="kbBatchAction('public')">公开</button>
+      <button type="button" class="kb-btn kb-btn-quiet" data-batch="unpublic" onclick="kbBatchAction('unpublic')">取消公开</button>
+      <button type="button" class="kb-btn kb-btn-quiet" data-batch="copy" onclick="kbBatchAction('copy')">复制链接</button>
+      <button type="button" class="kb-btn kb-btn-quiet" data-batch="clear" onclick="kbBatchAction('clear')">清空</button>
+      <button type="button" class="kb-iconbtn" data-batch="exit" onclick="kbBatchAction('exit')" aria-label="退出批量模式">✕</button>
+    </div>
 
     <section class="kb-list" id="kb-list" aria-label="报告列表">
       <div class="kb-loading"><span class="kb-spinner" aria-hidden="true"></span>加载知识库…</div>

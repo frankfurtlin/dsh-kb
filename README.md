@@ -84,6 +84,15 @@ SQLite 索引库（摘要/正文缓存 + 已读/收藏 + 公开标记 + AI sidec
   `betterlife/data/kb_public.json` 里 `public: true` 且仍存在的报告导入 SQLite，幂等；
   已用它恢复了老站原有的 3 篇公开报告。
 
+**P7：批量操作与筛选记忆**
+- **批量操作**：工具栏「选择」进入多选，卡片出现勾选框；批量条支持全选本页、标记已读、
+  收藏、公开、取消公开、复制公开链接、清空。后端 `POST /api/kb/bulk` 一次最多 500 篇，
+  重复路径去重，非法路径忽略并计入 `missing`。
+- **搜索历史**：搜索过的词存 `localStorage`（最多 8 条），聚焦空搜索框时出现下拉，可点选
+  复搜或删除单条。
+- **保存筛选**：工具栏「保存筛选」把当前 q/分类/系列/日期区间/视图/排序/检索方式存成一
+  条命名快照（最多 10 条），左导航「已保存」里一键套用或删除。
+
 ## 结构
 
 ```
@@ -114,7 +123,7 @@ server/app/
   api/routes/public_site.py P6：匿名只读站 /kb-public/ 与 /kb-public/reports/<path>
   web/templates/index.html  知识库页面（左导航 + 列表 + 抽屉）
   web/static/               style.css / core.js / ui.js / kb.js / icon-192.png
-  tests/                    pytest：索引/检索/状态、公开外链与老站迁移、P0/P1 基础设施（33 项）
+  tests/                    pytest：索引/检索/状态、批量、公开外链与老站迁移、P0/P1 基础设施（35 项）
 requirements.txt            后端依赖（fastapi/uvicorn/jinja2/httpx/numpy/fastembed/onnxruntime）
 requirements-dev.txt        开发依赖（pytest）
 pytest.ini                  pytest 配置（testpaths=tests）
@@ -211,7 +220,7 @@ iframe 内使用 `/kb/` 这一套。
 ```bash
 # 单元/接口测试（自带临时 reports + 临时索引库，不碰生产数据）
 cd /root/workspace/plugins/dsh-kb/server
-../.venv/bin/python -m pytest        # 33 passed
+../.venv/bin/python -m pytest        # 35 passed
 
 # 端到端验收
 cd /root/workspace/plugins/dsh-kb/verification
@@ -221,17 +230,18 @@ node verify-proxy.mjs    # host 半（lib/index.js）隔离验收，不需要装
 
 最近一次结果（2026-11-12，P0/P1 工程化对齐后）：
 
-- `pytest` **33 passed** —— 索引同步与分类/系列/日期派生、列表筛选（分类/系列/日期区间/
+- `pytest` **35 passed** —— 索引同步与分类/系列/日期派生、列表筛选（分类/系列/日期区间/
   半开区间/分页/排序）、标题与正文检索（snippet/match）、详情 preview、已读/收藏往返、
-  非法路径 400、筛选态树计数、公开外链（外链生成、匿名 200、内链改写、附件白名单、
+  非法路径 400、批量读写、筛选态树计数、公开外链（外链生成、匿名 200、内链改写、附件白名单、
   目录页、越权 404、取消公开立即生效、老站公开状态迁移）、P0/P1（指纹缓存、gzip、
   统一错误体、healthz、版本号、X-Process-Time）。
-- `verify-app.mjs` **74/74 passed** —— 树/列表/检索/前缀反代/重定向；分类、系列、快捷日期
+- `verify-app.mjs` **82/82 passed** —— 树/列表/检索/前缀反代/重定向；分类、系列、快捷日期
   与**自定义日期区间**（含倒置拒绝、筛选条、清除恢复）；健康检查、统一错误体、静态指纹
   长缓存、无指纹短缓存、gzip；标题与正文搜索高亮；排序与分页；详情抽屉（preview、自动已读、
   收藏、打开原文）；AI sidecar 卡片/抽屉；向量与问答接口的降级路径；周报面板（概览/主题/统计）；
   公开开关（公开/取消公开、公开视图、公开外链匿名 200、附件白名单、私有报告 404、越权路径 404）；
-  收藏/未读视图；筛选态分类计数收敛；移动端；无 JS 报错。
+  收藏/未读视图；筛选态分类计数收敛；批量选择与批量收藏；搜索历史；
+  保存/套用/删除筛选；移动端；无 JS 报错。
 - `verify-proxy.mjs` **11/11 passed** —— 导出与注册、`/kb/`、`/kb/api/kb`、`/kb/static/*`、
   AI 桥鉴权（无密钥/错密钥都按 404 隐藏）
   反代、`/kb?x=1 → 302 /kb/?x=1`、401/403 鉴权闸门、上游未启动时 502 中文提示。

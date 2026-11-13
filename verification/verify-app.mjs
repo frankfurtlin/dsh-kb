@@ -234,6 +234,7 @@ async function main() {
     const consoleErrors = []
     page.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()) })
     page.on('pageerror', (error) => consoleErrors.push('pageerror: ' + error.message))
+    page.on('dialog', (dialog) => dialog.accept('验收筛选'))
     await page.goto(PAGE_URL, { waitUntil: 'networkidle' })
     await page.waitForSelector('.kb-item', { timeout: 15000 })
 
@@ -449,6 +450,51 @@ async function main() {
     await page.click('#kb-digest .kb-ask-foot .kb-btn-primary')
     await page.waitForTimeout(200)
     check('P5 关闭周报回到列表', await page.locator('#kb-digest').evaluate((node) => node.classList.contains('bl-hidden')))
+
+    // ---------- 批量操作（P7） ----------
+    await page.click('.kb-navitem[data-view="all"]')
+    await page.waitForTimeout(400)
+    const batchBefore = (await api('/api/kb/tree')).json
+    await page.click('#kb-select-toggle')
+    await page.waitForSelector('.kb-check')
+    check('P7 批量模式出现勾选框', (await page.locator('.kb-check').count()) > 0)
+    await page.locator('.kb-check').nth(0).check()
+    await page.locator('.kb-check').nth(1).check()
+    check('P7 批量条显示已选数量', (await page.locator('#kb-batch-count').innerText()).trim() === '已选 2 篇',
+      await page.locator('#kb-batch-count').innerText())
+    const selPaths = await page.$$eval('.kb-check:checked', (els) => els.map((el) => el.dataset.path))
+    await page.click('[data-batch="star"]')
+    await page.waitForTimeout(1200)
+    const starredItems = (await api('/api/kb?view=starred&limit=500')).json.items.map((item) => item.path)
+    const batchAfter = (await api('/api/kb/tree')).json
+    check('P7 批量收藏写入后端', selPaths.every((path) => starredItems.includes(path)) &&
+      batchAfter.starred >= batchBefore.starred + 1,
+      `${batchBefore.starred} → ${batchAfter.starred}，选中 ${selPaths.length} 篇`)
+    check('P7 批量操作后清空勾选', (await page.locator('.kb-check:checked').count()) === 0)
+    await page.click('#kb-select-toggle')
+    await page.waitForTimeout(300)
+
+    // ---------- 搜索历史（P7） ----------
+    await page.fill('#kb-search', '铝业')
+    await page.waitForTimeout(1000)
+    await page.fill('#kb-search', '')
+    await page.waitForTimeout(500)
+    check('P7 搜索历史记录了刚搜过的词', (await page.locator('.kb-hist-item').count()) >= 1,
+      `${await page.locator('.kb-hist-item').count()} 条`)
+    await shot(page, '14-history.png', true)
+
+    // ---------- 已保存筛选（P7） ----------
+    await page.click('#kb-save-filter')
+    await page.waitForTimeout(500)
+    check('P7 保存筛选出现在左导航', (await page.locator('.kb-saved-item').count()) === 1,
+      await page.locator('#kb-saved').innerText())
+    await page.locator('.kb-saved-item').first().click()
+    await page.waitForTimeout(900)
+    check('P7 套用已保存筛选后列表正常', (await page.locator('.kb-item').count()) > 0)
+    await shot(page, '15-saved-filter.png', true)
+    await page.locator('.kb-saved-del').first().click()
+    await page.waitForTimeout(300)
+    check('P7 删除保存筛选后列表消失', (await page.locator('.kb-saved-item').count()) === 0)
 
     // ---------- 移动端 ----------
     await page.setViewportSize({ width: 390, height: 844 })

@@ -31,6 +31,12 @@ var _kbDrawerPath = '';
 var _kbEmbedAvailable = false;
 var _kbPublicBase = '';
 var _kbPublicPaths = {};
+var _kbSelectMode = false;
+var _kbSelected = {};
+var _kbHist = [];
+var _kbSaved = [];
+var KB_HIST_KEY = 'kb:search-history';
+var KB_SAVED_KEY = 'kb:saved-filters';
 
 var KB_CAT_SLUG = {
   '市场全景': 'market',
@@ -97,6 +103,10 @@ function kbInit() {
   kbLoadEmbedStatus();
   kbLoadPublicState();
   kbSyncDateInputs();
+  kbLoadHistory();
+  kbLoadSaved();
+  kbBindHistory();
+  kbRenderSaved();
   kbLoadTree();
   kbLoad();
 }
@@ -265,10 +275,12 @@ async function kbLoad(force) {
   _kbItems = data.items || [];
   _kbTotal = data.total || 0;
   kbRenderList();
+  kbRenderBatchbar();
   kbRenderFilterbar();
   kbRenderPager();
   var result = kbEl('kb-result');
   if (result) result.textContent = kbResultLabel();
+  if (kbState.q) kbPushHistory(kbState.q);
 }
 
 function kbResultLabel() {
@@ -305,8 +317,14 @@ function kbCard(item, index) {
     ? ((item.match === 'body' && item.snippet) ? item.snippet : (item.snippet || item.summary || ''))
     : (item.summary_ai || item.summary || '');
   var hasAi = !!item.summary_ai;
-  return '<article class="kb-item' + (item.read ? '' : ' is-unread') + '" data-path="' + escAttr(item.path) + '">' +
-    '<div class="kb-item-top">' +
+  var selected = !!_kbSelected[item.path];
+  var check = _kbSelectMode
+    ? '<input type="checkbox" class="kb-check" data-path="' + escAttr(item.path) + '"' +
+      (selected ? ' checked' : '') + ' aria-label="选择这篇报告" onchange="kbToggleSelect(this)">'
+    : '';
+  return '<article class="kb-item' + (item.read ? '' : ' is-unread') + (_kbSelectMode ? ' is-selecting' : '') +
+    (selected ? ' is-selected' : '') + '" data-path="' + escAttr(item.path) + '">' +
+    '<div class="kb-item-top">' + check +
       '<span class="kb-badge kb-badge-' + kbCatSlug(item.category) + '">' + esc(item.category) + '</span>' +
       (item.series ? '<span class="kb-item-series">' + esc(item.series) + '</span>' : '') +
       (hasAi ? '<span class="kb-ai-mark" title="AI 已生成结构化摘要">AI</span>' : '') +
@@ -417,6 +435,7 @@ function kbOnSearch(value) {
   kbState.q = value.trim();
   var clear = kbEl('kb-search-clear');
   if (clear) clear.classList.toggle('bl-hidden', !kbState.q);
+  if (!kbState.q) kbRenderHistory();
   clearTimeout(_kbTimer);
   _kbTimer = setTimeout(function () {
     kbState.offset = 0;
@@ -973,4 +992,258 @@ async function kbOpenPath(path) {
   drawer.classList.remove('bl-hidden');
   kbFillDrawer(item);
   kbLoadDetail(path);
+}
+
+
+// ---------- 批量操作 ----------
+
+function kbToggleSelectMode(force) {
+  _kbSelectMode = typeof force === 'boolean' ? force : !_kbSelectMode;
+  if (!_kbSelectMode) _kbSelected = {};
+  var btn = kbEl('kb-select-toggle');
+  if (btn) {
+    btn.classList.toggle('is-on', _kbSelectMode);
+    btn.setAttribute('aria-pressed', _kbSelectMode ? 'true' : 'false');
+  }
+  kbRenderList();
+  kbRenderBatchbar();
+}
+
+function kbToggleSelect(input) {
+  var path = input.getAttribute('data-path') || '';
+  if (!path) return;
+  if (input.checked) _kbSelected[path] = true;
+  else delete _kbSelected[path];
+  var card = input.closest('.kb-item');
+  if (card) card.classList.toggle('is-selected', input.checked);
+  kbRenderBatchbar();
+}
+
+function kbSelectedPaths() {
+  return Object.keys(_kbSelected).filter(function (path) { return _kbSelected[path]; });
+}
+
+function kbRenderBatchbar() {
+  var bar = kbEl('kb-batchbar');
+  if (!bar) return;
+  bar.classList.toggle('bl-hidden', !_kbSelectMode);
+  if (!_kbSelectMode) return;
+  var paths = kbSelectedPaths();
+  var count = kbEl('kb-batch-count');
+  if (count) count.textContent = '已选 ' + paths.length + ' 篇';
+  bar.querySelectorAll('[data-batch="copy"]').forEach(function (btn) {
+    var hasPublic = paths.some(function (path) { return !!_kbPublicPaths[path]; });
+    btn.disabled = !hasPublic;
+  });
+  ['read', 'star', 'public', 'unpublic'].forEach(function (action) {
+    bar.querySelectorAll('[data-batch="' + action + '"]').forEach(function (btn) {
+      btn.disabled = paths.length === 0;
+    });
+  });
+}
+
+async function kbBatchAction(action) {
+  if (action === 'exit') { kbToggleSelectMode(false); return; }
+  if (action === 'all') {
+    _kbItems.forEach(function (item) { _kbSelected[item.path] = true; });
+    kbRenderList();
+    kbRenderBatchbar();
+    return;
+  }
+  if (action === 'clear') {
+    _kbSelected = {};
+    kbRenderList();
+    kbRenderBatchbar();
+    return;
+  }
+  var paths = kbSelectedPaths();
+  if (!paths.length) { showToast('先勾选要操作的报告'); return; }
+  if (action === 'copy') {
+    var urls = paths.filter(function (path) { return !!_kbPublicPaths[path]; }).map(kbPublicUrl);
+    if (!urls.length) { showToast('选中的报告都还没公开'); return; }
+    await kbCopyText(urls.join('\n'), '已复制 ' + urls.length + ' 条公开链接');
+    return;
+  }
+  var payload = { paths: paths };
+  var label = '';
+  if (action === 'read') { payload.read = true; label = '已标记已读'; }
+  else if (action === 'star') { payload.starred = true; label = '已收藏'; }
+  else if (action === 'public') { payload.public = true; label = '已公开'; }
+  else if (action === 'unpublic') { payload.public = false; label = '已取消公开'; }
+  var data = await safeFetch(API + '/kb/bulk', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!data) return;
+  _kbSelected = {};
+  showToast(label + '（' + (data.updated || 0) + ' 篇）' + ((data.missing || []).length ? '，' + data.missing.length + ' 篇未找到' : ''));
+  await kbLoadPublicState();
+  kbLoadTree();
+  kbLoad();
+}
+
+async function kbCopyText(text, okMessage) {
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast(okMessage || '已复制');
+  } catch (err) {
+    window.prompt('复制下面的内容：', text);
+  }
+}
+
+// ---------- 搜索历史 ----------
+
+function kbReadStore(key, fallback) {
+  try {
+    var raw = window.localStorage.getItem(key);
+    var value = raw ? JSON.parse(raw) : fallback;
+    return Array.isArray(value) ? value : fallback;
+  } catch (err) {
+    return fallback;
+  }
+}
+
+function kbWriteStore(key, value) {
+  try { window.localStorage.setItem(key, JSON.stringify(value)); } catch (err) { /* 隐私模式忽略 */ }
+}
+
+function kbLoadHistory() { _kbHist = kbReadStore(KB_HIST_KEY, []); }
+
+function kbPushHistory(query) {
+  var q = (query || '').trim();
+  if (q.length < 2) return;
+  _kbHist = _kbHist.filter(function (item) { return item !== q; });
+  _kbHist.unshift(q);
+  _kbHist = _kbHist.slice(0, 8);
+  kbWriteStore(KB_HIST_KEY, _kbHist);
+  kbRenderHistory();
+}
+
+function kbRenderHistory() {
+  var box = kbEl('kb-search-hist');
+  var input = kbEl('kb-search');
+  if (!box || !input) return;
+  if (!_kbHist.length || input.value) { box.classList.add('bl-hidden'); return; }
+  box.innerHTML = _kbHist.map(function (q, index) {
+    return '<span class="kb-hist-row" role="option">' +
+      '<button type="button" class="kb-hist-item" data-hist="' + escAttr(q) + '" onclick="kbUseHistory(this.dataset.hist)">' +
+        esc(q) + '</button>' +
+      '<button type="button" class="kb-iconbtn kb-hist-del" aria-label="删除这条搜索历史" ' +
+        'onclick="kbDeleteHistory(' + index + ')">✕</button></span>';
+  }).join('');
+  box.classList.remove('bl-hidden');
+}
+
+function kbUseHistory(q) {
+  var input = kbEl('kb-search');
+  if (input) input.value = q;
+  kbState.q = q;
+  kbState.offset = 0;
+  var box = kbEl('kb-search-hist');
+  if (box) box.classList.add('bl-hidden');
+  kbLoadTree();
+  kbLoad();
+}
+
+function kbDeleteHistory(index) {
+  _kbHist.splice(index, 1);
+  kbWriteStore(KB_HIST_KEY, _kbHist);
+  kbRenderHistory();
+}
+
+function kbBindHistory() {
+  var input = kbEl('kb-search');
+  var box = kbEl('kb-search-hist');
+  if (!input || !box) return;
+  input.addEventListener('focus', function () { kbRenderHistory(); });
+  input.addEventListener('blur', function () {
+    setTimeout(function () { box.classList.add('bl-hidden'); }, 180);
+  });
+}
+
+// ---------- 已保存筛选 ----------
+
+function kbLoadSaved() { _kbSaved = kbReadStore(KB_SAVED_KEY, []); }
+
+function kbFilterSnapshot() {
+  return {
+    q: kbState.q,
+    category: kbState.category,
+    series: kbState.series,
+    dateFrom: kbState.dateFrom,
+    dateTo: kbState.dateTo,
+    view: kbState.view,
+    sort: kbState.sort,
+    mode: kbState.mode,
+  };
+}
+
+function kbFilterLabel(snap) {
+  var parts = [];
+  if (snap.q) parts.push('「' + snap.q + '」');
+  if (snap.category) parts.push(snap.category);
+  if (snap.series) parts.push(snap.series);
+  if (snap.dateFrom || snap.dateTo) parts.push((snap.dateFrom || '…') + '→' + (snap.dateTo || '…'));
+  if (snap.view && snap.view !== 'all') parts.push({ unread: '未读', starred: '收藏', public: '公开' }[snap.view] || snap.view);
+  return parts.join(' · ') || '全部报告';
+}
+
+function kbSaveFilter() {
+  var name = window.prompt('给当前筛选起个名字：', kbFilterLabel(kbFilterSnapshot()));
+  if (name === null) return;
+  name = (name || '').trim();
+  if (!name) { showToast('名字不能为空'); return; }
+  _kbSaved.unshift({ name: name.slice(0, 40), snap: kbFilterSnapshot() });
+  _kbSaved = _kbSaved.slice(0, 10);
+  kbWriteStore(KB_SAVED_KEY, _kbSaved);
+  kbRenderSaved();
+  showToast('已保存筛选「' + name + '」');
+}
+
+async function kbApplySaved(index) {
+  var entry = _kbSaved[index];
+  if (!entry || !entry.snap) return;
+  var snap = entry.snap;
+  kbState.q = snap.q || '';
+  kbState.category = snap.category || '';
+  kbState.series = snap.series || '';
+  kbState.date = '';
+  kbState.dateFrom = snap.dateFrom || '';
+  kbState.dateTo = snap.dateTo || '';
+  kbState.view = snap.view || 'all';
+  kbState.sort = snap.sort || 'date_desc';
+  kbState.mode = snap.mode || 'hybrid';
+  kbState.offset = 0;
+  var input = kbEl('kb-search');
+  if (input) input.value = kbState.q;
+  var sort = kbEl('kb-sort');
+  if (sort) sort.value = kbState.sort;
+  var clear = kbEl('kb-search-clear');
+  if (clear) clear.classList.toggle('bl-hidden', !kbState.q);
+  kbSyncDateInputs();
+  kbRenderMode();
+  kbRenderDates();
+  kbLoadTree();
+  kbLoad();
+}
+
+function kbDeleteSaved(index) {
+  _kbSaved.splice(index, 1);
+  kbWriteStore(KB_SAVED_KEY, _kbSaved);
+  kbRenderSaved();
+}
+
+function kbRenderSaved() {
+  var box = kbEl('kb-saved');
+  var wrap = kbEl('kb-saved-wrap');
+  if (!box) return;
+  if (wrap) wrap.classList.toggle('bl-hidden', !_kbSaved.length);
+  box.innerHTML = _kbSaved.map(function (entry, index) {
+    return '<span class="kb-saved-row">' +
+      '<button type="button" class="kb-saved-item" data-saved="' + index + '" title="' + escAttr(kbFilterLabel(entry.snap || {})) + '" ' +
+        'onclick="kbApplySaved(' + index + ')">' + esc(entry.name) + '</button>' +
+      '<button type="button" class="kb-iconbtn kb-saved-del" aria-label="删除保存的筛选" ' +
+        'onclick="kbDeleteSaved(' + index + ')">✕</button></span>';
+  }).join('');
 }
