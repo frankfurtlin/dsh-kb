@@ -124,7 +124,7 @@ def enrich_report(path: str, *, force: bool = False) -> dict:
     item = dict(item)
     item["body"] = _full_body(path)
     payload = enrich_one(item)
-    kb_store.set_ai(path, payload)
+    kb_store.set_ai(path, payload, model=kb_ai.model_label())
     return {"ok": True, "path": path, "summary_ai": payload["summary_ai"], "tags": payload["tags"]}
 
 
@@ -142,12 +142,13 @@ def enrich_pending(limit: int = 3, *, include_failed: bool = False) -> dict:
     items = kb_store.next_pending(limit=limit, include_failed=include_failed)
     enriched = failed = 0
     errors: list[str] = []
+    model = kb_ai.model_label()
 
     def run(item: dict) -> tuple[str, str]:
         """在线程里抽一篇；返回 (path, 错误信息或空串)。"""
         try:
             payload = enrich_one(item)
-            kb_store.set_ai(item["path"], payload)
+            kb_store.set_ai(item["path"], payload, model=model)
             return item["path"], ""
         except Exception as exc:  # 单篇失败不影响整批
             message = f"{type(exc).__name__}: {exc}"[:300]

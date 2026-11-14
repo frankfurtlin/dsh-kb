@@ -179,6 +179,21 @@ async function main() {
       (aiReport?.entities || []).length === 2, `tags=${(aiReport?.tags || []).length}`)
     check('P1 列表接口返回 AI 字段', ((await api('/api/kb?limit=1')).json?.items?.[0]?.tags || []).length === 5)
 
+    // ---------- v0.3：标签关系 / 时间戳 ----------
+    const tagList = (await api('/api/kb/tags')).json?.tags || []
+    check('v0.3 GET /api/kb/tags 返回标签关系',
+      tagList.some((row) => row.name === 'A股' && row.reports >= 1), `tags=${tagList.length}`)
+    const tagFiltered = (await api('/api/kb?tag=' + encodeURIComponent('A股'))).json
+    check('v0.3 按标签筛选列表',
+      tagFiltered?.total >= 1 && (tagFiltered.items || []).every((item) => (item.tags || []).includes('A股')),
+      `total=${tagFiltered?.total}`)
+    const treeTag = (await api('/api/kb/tree?tag=' + encodeURIComponent('A股'))).json
+    check('v0.3 树的 total 随标签收敛', treeTag?.total === tagFiltered?.total,
+      `tree=${treeTag?.total} list=${tagFiltered?.total}`)
+    const metaItem = (await api('/api/kb/report/' + reportPath.split('/').map(encodeURIComponent).join('/'))).json?.item
+    check('v0.3 报告带入库/索引时间与模型字段',
+      !!metaItem?.created_at && !!metaItem?.updated_at && 'ai_model' in metaItem)
+
     // ---------- P2/P3/P5：向量/问答/周报接口（临时后端无模型，验证降级路径） ----------
     const embedStats = await api('/api/kb/embed/stats')
     check('P2 GET /api/kb/embed/stats 返回模型与统计',
@@ -311,6 +326,21 @@ async function main() {
     await page.click('#kb-filterbar .kb-chip:has-text("日期：")')
     await page.waitForTimeout(400)
     check('P0 清除区间后恢复全量', (await page.locator('.kb-item').count()) === Math.min(tree.total, 20))
+
+    // ---------- v0.3：标签导航 ----------
+    const tagButtons = page.locator('#kb-tags button.kb-tag-chip')
+    check('v0.3 左导航渲染标签栏', (await tagButtons.count()) >= 3, `chips=${await tagButtons.count()}`)
+    const firstTagBtn = page.locator('#kb-tags button.kb-tag-chip', { hasText: 'A股' }).first()
+    const tagName = (await firstTagBtn.getAttribute('data-tag')) || 'A股'
+    await firstTagBtn.click()
+    await page.waitForTimeout(500)
+    const tagApiTotal = ((await api('/api/kb?tag=' + encodeURIComponent(tagName))).json || {}).total
+    const tagBarText = await page.locator('#kb-filterbar').innerText()
+    check('v0.3 点标签后出现筛选 chip', tagBarText.includes('标签：') && tagBarText.includes(tagName), tagBarText.replace(/\s+/g, ' ').slice(0, 60))
+    check('v0.3 标签筛选列表数量与 API 一致',
+      (await page.locator('#kb-result').innerText()).includes('/ ' + tagApiTotal), `api=${tagApiTotal}`)
+    await firstTagBtn.click()
+    await page.waitForTimeout(400)
 
     // ---------- 检索 ----------
     await page.fill('#kb-search', '铝业')

@@ -25,6 +25,7 @@ def list_kb(
     q: str = "",
     category: str = "",
     series: str = "",
+    tag: str = "",
     date_from: str = "",
     date_to: str = "",
     view: str = "all",
@@ -38,6 +39,7 @@ def list_kb(
         q=q,
         category=category,
         series=series,
+        tag=tag,
         date_from=date_from,
         date_to=date_to,
         view=view,
@@ -55,11 +57,12 @@ def kb_tree(
     date_from: str = "",
     date_to: str = "",
     view: str = "all",
+    tag: str = "",
     refresh: bool = False,
 ) -> dict:
     stats = kb_store.sync(force=refresh)
     payload = kb_store.tree(
-        q=q, category=category, date_from=date_from, date_to=date_to, view=view
+        q=q, category=category, date_from=date_from, date_to=date_to, view=view, tag=tag
     )
     payload["scan_total"] = stats["scan_total"]
     return payload
@@ -95,6 +98,18 @@ def kb_search(
         mode=mode,
     )
     return {"q": q, "items": result["items"], "total": result["total"], "mode": result["mode"]}
+
+
+@router.get("/kb/tags")
+def kb_tags(q: str = "", limit: int = 200) -> dict:
+    """标签列表（按报告数倒序）；用于左导航「标签」与筛选。"""
+    return {"tags": kb_store.tags_overview(keyword=q, limit=max(1, min(500, limit)))}
+
+
+@router.get("/kb/events")
+def kb_events(path: str = "", limit: int = 50) -> dict:
+    """变更轨迹（AI 重分类/改标签、状态变更）；path 为空时返回全局最近事件。"""
+    return {"events": kb_store.events_for(path=path, limit=max(1, min(200, limit)))}
 
 
 @router.get("/kb/embed/stats")

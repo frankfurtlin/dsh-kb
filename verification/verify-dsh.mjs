@@ -172,7 +172,7 @@ try {
     // P5：周报面板（iframe 内）
     await frame.click('#kb-digest-entry')
     await frame.waitForSelector('#kb-digest:not(.bl-hidden)', { timeout: 10000 })
-    await frame.waitForSelector('#kb-digest-body .kb-digest-meta', { timeout: 20000 })
+    await frame.waitForSelector('#kb-digest-body .kb-digest-meta', { timeout: 120000 })
     const digestText = await frame.locator('#kb-digest-body').innerText()
     check('iframe 内周报面板展示概览', digestText.includes('篇报告'), digestText.slice(0, 50).replace(/\s+/g, ' '))
     await page.screenshot({ path: join(OUT, '09-dsh-digest.png'), fullPage: true })

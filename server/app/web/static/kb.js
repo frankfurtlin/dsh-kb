@@ -13,6 +13,7 @@ var kbState = {
   q: '',
   category: '',
   series: '',
+  tag: '',
   date: '',
   dateFrom: '',
   dateTo: '',
@@ -71,6 +72,7 @@ function kbQuery() {
   if (kbState.q) params.set('q', kbState.q);
   if (kbState.category) params.set('category', kbState.category);
   if (kbState.series) params.set('series', kbState.series);
+  if (kbState.tag) params.set('tag', kbState.tag);
   if (kbState.date) {
     params.set('date_from', kbState.date);
     params.set('date_to', kbState.date);
@@ -194,6 +196,7 @@ async function kbLoadTree(force) {
   _kbTree = data;
   kbRenderCounts();
   kbRenderCats();
+  kbRenderTags();
   kbRenderDates();
   var hint = kbEl('kb-side-hint');
   if (hint) hint.textContent = data.total + ' 篇 · ' + (data.dates || []).length + ' 个日期';
@@ -244,6 +247,33 @@ function kbRenderCats() {
     }
   });
   box.innerHTML = html;
+}
+
+function kbRenderTags() {
+  var box = kbEl('kb-tags');
+  if (!box) return;
+  var tags = ((_kbTree || {}).tags || []).slice(0, 15);
+  if (!tags.length) {
+    box.innerHTML = '<span class="kb-tags-empty">还没有标签（等 AI 抽取出标签后出现）</span>';
+    return;
+  }
+  box.innerHTML = tags.map(function (row) {
+    var on = kbState.tag === row.name;
+    return '<button type="button" class="kb-tag-chip' + (on ? ' is-on' : '') + '"' +
+      ' data-tag="' + escAttr(row.name) + '" aria-pressed="' + (on ? 'true' : 'false') + '"' +
+      ' onclick="kbSetTag(this.dataset.tag)" title="按标签筛选：' + escAttr(row.name) + '">' +
+      '#' + esc(row.name) + '<span class="kb-tag-n">' + row.reports + '</span></button>';
+  }).join('');
+}
+
+function kbSetTag(name) {
+  var next = String(name || '');
+  if (kbState.tag === next) next = '';
+  kbState.tag = next;
+  kbState.offset = 0;
+  kbRenderFilterbar();
+  kbLoadTree();
+  kbLoad();
 }
 
 function kbRenderDates() {
@@ -306,7 +336,8 @@ function kbTagChips(tags, cls) {
   var list = (tags || []).filter(Boolean).slice(0, 4);
   if (!list.length) return '';
   return '<div class="' + (cls || 'kb-item-tags') + '">' + list.map(function (tag) {
-    return '<span class="kb-tag" data-tag="' + escAttr(tag) + '">#' + esc(tag) + '</span>';
+    return '<button type="button" class="kb-tag" data-tag="' + escAttr(tag) + '"' +
+      ' onclick="kbSetTag(this.dataset.tag)" title="按标签筛选">#' + esc(tag) + '</button>';
   }).join('') + '</div>';
 }
 
@@ -454,6 +485,7 @@ function kbResetFilters() {
   kbState.q = '';
   kbState.category = '';
   kbState.series = '';
+  kbState.tag = '';
   kbState.date = '';
   kbState.dateFrom = '';
   kbState.dateTo = '';
@@ -467,6 +499,7 @@ function kbResetFilters() {
   if (sort) sort.value = 'date_desc';
   kbRenderCounts();
   kbRenderCats();
+  kbRenderTags();
   kbRenderDates();
   kbLoad();
 }
@@ -486,6 +519,7 @@ function kbRenderFilterbar() {
   if (kbState.q) chips.push(['搜索：' + kbState.q, 'kbResetSearch']);
   if (kbState.category) chips.push([kbState.category, 'kbClearCategory']);
   if (kbState.series) chips.push([kbState.series, 'kbClearSeries']);
+  if (kbState.tag) chips.push(['标签：#' + kbState.tag, 'kbClearTag']);
   if (kbState.date) chips.push(['日期：' + kbFmtDate(kbState.date), 'kbResetDates']);
   else if (kbState.dateFrom || kbState.dateTo) {
     var rangeLabel = (kbState.dateFrom ? kbFmtDate(kbState.dateFrom) : '最早') + ' → ' +
@@ -508,6 +542,7 @@ function kbRenderFilterbar() {
 function kbResetSearch() { kbClearSearch(); }
 function kbClearCategory() { kbSetCategory(''); }
 function kbClearSeries() { kbSetSeries(''); }
+function kbClearTag() { kbSetTag(''); }
 function kbClearView() { kbSetView('all'); }
 
 // ---------- 分页 ----------
@@ -697,9 +732,16 @@ function kbFillDrawer(item, detail) {
   }
   if (title) title.textContent = item.title;
   if (meta) {
-    meta.innerHTML = (item.date ? '<span>' + kbFmtDate(item.date) + '</span>' : '') +
-      '<span>' + kbFmtSize(item.size) + '</span>' +
-      '<span>' + esc(item.path) + '</span>';
+    var metaParts = [];
+    if (item.date) metaParts.push('<span>' + kbFmtDate(item.date) + '</span>');
+    metaParts.push('<span>' + kbFmtSize(item.size) + '</span>');
+    metaParts.push('<span>' + esc(item.path) + '</span>');
+    if (item.created_at) metaParts.push('<span title="首次进入索引">入库 ' + kbFmtDate(String(item.created_at).slice(0, 10)) + '</span>');
+    if (item.updated_at && item.updated_at !== item.created_at) {
+      metaParts.push('<span title="最近一次索引更新">更新 ' + kbFmtDate(String(item.updated_at).slice(0, 10)) + '</span>');
+    }
+    if (item.ai_model) metaParts.push('<span title="生成 AI 摘要所用模型">模型 ' + esc(item.ai_model) + '</span>');
+    meta.innerHTML = metaParts.join('');
   }
   var source = detail || item;
   if (actions) {

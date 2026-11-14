@@ -165,6 +165,17 @@ SQLite kb.sqlite ── ② 正文摘要 + 全文（≤2 万字）
 - **保存筛选**：工具栏「保存筛选」把当前 q/分类/系列/日期区间/视图/排序/检索方式存成一
   条命名快照（最多 10 条），左导航「已保存」里一键套用或删除。
 
+**P8：数据模型升级（v0.3｜时间戳 / 标签关系 / 变更轨迹）**
+- **时间线**：`reports` 新增 `created_at`（首次入库）、`updated_at`（最近一次变更：索引/AI/
+  状态）、`read_at`、`starred_at`、`public_at`、`ai_model`（生成 AI 摘要的 DSH 模型）。
+  旧库连接时自动补列，`created_at` 用文件 mtime 近似回填。
+- **标签一等公民**：`tags` / `report_tags` / `tag_aliases` 三张表；左导航新增「标签」栏
+  （全局 top 15，带报告数），点标签即筛选，可与分类/日期/关键词组合；卡片和抽屉里的标签
+  也可点。AI 重新打标签时自动替换旧关系、清理零引用标签。
+- **变更轨迹**：`report_events` 追加记录 `ingest` / `reclassify` / `ai_enrich` / `ai_error` /
+  `state` / `public` / `remove`，`GET /api/kb/events?path=` 可查「这篇为什么变成现在这样」。
+- **抽屉元数据**：显示入库时间、最近更新时间与生成摘要所用模型。
+
 ## 结构
 
 ```
@@ -262,11 +273,13 @@ host 半默认反代 `127.0.0.1:8816`；如需临时指向其它端口，可设
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/kb` | 列表：`q`、`category`、`series`、`date_from`、`date_to`、`view=unread|starred`、`sort=date_desc|date_asc|title|updated`、`offset`、`limit`（≤500）、`refresh=1` → `{items, total, scan_total}`；`q` 命中时 item 附 `snippet`/`match` |
-| GET | `/api/kb/tree` | 导航树：`{total, unread, starred, public, categories, series, dates, scan_total}`；接受 `q/category/date_from/date_to/view`，计数随筛选收敛 |
+| GET | `/api/kb` | 列表：`q`、`category`、`series`、`tag`、`date_from`、`date_to`、`view=unread|starred|public`、`sort=date_desc|date_asc|title|updated`、`offset`、`limit`（≤500）、`refresh=1` → `{items, total, scan_total}`；`q` 命中时 item 附 `snippet`/`match` |
+| GET | `/api/kb/tree` | 导航树：`{total, unread, starred, public, categories, series, dates, tags, scan_total}`；接受 `q/category/date_from/date_to/view/tag`，计数随筛选收敛；`tags` 为全局 top 15 标签 |
 | GET | `/api/kb/search?q=` | 与列表相同的检索，返回 `{q, items, total}` |
 | GET | `/api/kb/search?q=&mode=` | 混合检索：`mode=auto|hybrid|lexical`；返回 `{q, items, total, mode}`，item 带 `score/semantic_score/match/snippet` |
 | GET | `/api/kb/report/{path:path}` | 单篇 `{item}`（含 `preview` 前 1200 字、AI 摘要/要点/标签/实体）；不存在 404 |
+| GET | `/api/kb/tags?q=&limit=` | 标签列表：`{tags:[{name, reports, updated_at}]}`（按报告数倒序） |
+| GET | `/api/kb/events?path=&limit=` | 变更轨迹：`{events:[{id,path,kind,payload,model,at}]}`，kind=`ai_enrich|state|public|ai_error` |
 | GET | `/api/kb/ai/stats` | AI sidecar 统计（`configured/model/total/enriched/failed/pending/version`） |
 | POST | `/api/kb/enrich` | body `{path?, limit?, force?, retry_failed?}`：手动补 AI 摘要（≤50/次） |
 | GET | `/api/kb/embed/stats` | 向量索引统计（`enabled/available/model/dim/stats`） |
@@ -292,7 +305,7 @@ iframe 内使用 `/kb/` 这一套。
 ```bash
 # 单元/接口测试（自带临时 reports + 临时索引库，不碰生产数据）
 cd /root/workspace/plugins/dsh-kb/server
-../.venv/bin/python -m pytest        # 35 passed
+../.venv/bin/python -m pytest        # 39 passed
 
 # 端到端验收
 cd /root/workspace/plugins/dsh-kb/verification
@@ -307,7 +320,7 @@ node verify-proxy.mjs    # host 半（lib/index.js）隔离验收，不需要装
   非法路径 400、批量读写、筛选态树计数、公开外链（外链生成、匿名 200、内链改写、附件白名单、
   目录页、越权 404、取消公开立即生效、老站公开状态迁移）、P0/P1（指纹缓存、gzip、
   统一错误体、healthz、版本号、X-Process-Time）。
-- `verify-app.mjs` **82/82 passed** —— 树/列表/检索/前缀反代/重定向；分类、系列、快捷日期
+- `verify-app.mjs` **89/89 passed** —— 树/列表/检索/前缀反代/重定向；分类、系列、快捷日期
   与**自定义日期区间**（含倒置拒绝、筛选条、清除恢复）；健康检查、统一错误体、静态指纹
   长缓存、无指纹短缓存、gzip；标题与正文搜索高亮；排序与分页；详情抽屉（preview、自动已读、
   收藏、打开原文）；AI sidecar 卡片/抽屉；向量与问答接口的降级路径；周报面板（概览/主题/统计）；
@@ -344,9 +357,45 @@ AI 问答与周报要调模型（单次 20–40s），host 半对 `/kb/api/kb/as
 | `15-saved-filter.png` | 已保存筛选的套用与删除（`verify-app.mjs`） |
 | `16-batch.png` | 生产页：批量模式（勾选 3 篇 + 批量条） |
 | `17-history-saved.png` | 生产页：搜索历史 + 左导航「已保存」 |
+| `18-tags-prod.png` | 生产页：左导航「标签」栏 + 点标签后的筛选条（标签：#Minecraft） |
+| `19-drawer-meta-prod.png` | 生产页：抽屉元数据行（入库时间 / 路径） |
 
 语法门：`node --check lib/index.js && node --check client.js && node --check verification/verify-app.mjs && node --check verification/verify-proxy.mjs`；
 Python 用 `/usr/bin/python3.11 -m py_compile $(find server -name '*.py')`。
+
+## 数据模型（v0.3）
+
+`server/data/kb.sqlite` 里除了正文缓存，还记录「什么时候进来的、谁生成的、改过什么」：
+
+### reports 表（一篇报告一行）
+
+| 字段组 | 字段 | 说明 |
+| --- | --- | --- |
+| 身份 | `path`（唯一）、`id` | 相对 `reports/` 的路径，跨重建稳定 |
+| 文件事实 | `size`、`mtime` | 增量同步依据；变化才重读正文 |
+| 内容 | `title`、`category`、`series`、`date`、`summary`、`body` | `date` 来自 `YYYYMMDD/` 目录，业务日期 |
+| **时间线** | `created_at`、`updated_at` | 首次进索引时间（旧库用 mtime 近似回填）、最近一次变更时间（索引/AI/状态任一） |
+| AI 产物 | `summary_ai`、`key_points`、`entities`、`tags` | JSON 文本；标签另有关系表 |
+| AI 溯源 | `ai_version`、`ai_at`、`ai_model`、`ai_error` | 生成时间 + 使用的模型（DSH 切换后仍可追溯） |
+| 用户状态 | `read`/`read_at`、`starred`/`starred_at`、`public`/`public_at` | 布尔值 + 最近一次操作时间 |
+| 向量 | `embedding`、`embed_model`、`embed_at` | float32 BLOB + 模型名 |
+
+### tags / report_tags / tag_aliases
+
+- `tags(name UNIQUE, reports, created_at, updated_at)`：标签主表，`reports` 是冗余计数（可重算）。
+- `report_tags(report_id, tag_id, source, created_at)`：报告↔标签多对多，`source` 目前是 `ai`，
+  预留给人工标签（`human`），人工标签优先于 AI。
+- `tag_aliases(alias, canonical_id)`：同义词/别名合并（R2 用），暂未启用。
+- 标签规范化：去 `#`、折叠空白、去控制字符、≤48 字、同篇去重；AI 重新打标签时先删旧关系再建新关系。
+
+### report_events（append-only）
+
+AI 重分类/改标签（`ai_enrich`）、失败（`ai_error`）、已读收藏（`state`）、公开（`public`）都会追加
+一行 `{path, kind, payload, model, at}`。用于回答「这篇为什么从市场全景变成策略研究」，
+也支持后续做「撤销 AI 覆盖」。
+
+> 设计原则不变：`reports/` 是源，SQLite 是派生 + 用户数据 + AI 产物；删库后重扫可重建
+> 内容与标签，但已读/收藏/公开时间与事件历史会丢（可先备份 `kb.sqlite`）。
 
 ## 实现要点
 

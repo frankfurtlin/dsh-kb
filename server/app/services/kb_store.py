@@ -52,6 +52,38 @@ CREATE TABLE IF NOT EXISTS reports (
 CREATE INDEX IF NOT EXISTS idx_reports_date ON reports(date);
 CREATE INDEX IF NOT EXISTS idx_reports_category ON reports(category);
 CREATE INDEX IF NOT EXISTS idx_reports_series ON reports(series);
+
+-- 标签关系表：标签从「JSON 文本」升级为一等公民。
+CREATE TABLE IF NOT EXISTS tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    reports INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS report_tags (
+    report_id INTEGER NOT NULL,
+    tag_id INTEGER NOT NULL,
+    source TEXT NOT NULL DEFAULT 'ai',
+    created_at TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (report_id, tag_id)
+);
+CREATE INDEX IF NOT EXISTS idx_report_tags_tag ON report_tags(tag_id);
+CREATE TABLE IF NOT EXISTS tag_aliases (
+    alias TEXT PRIMARY KEY,
+    canonical_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT ''
+);
+-- 变更轨迹：AI 重分类/改标签、人工覆盖、状态变更都留痕（append-only）。
+CREATE TABLE IF NOT EXISTS report_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    path TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    payload TEXT NOT NULL DEFAULT '{}',
+    model TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_report_events_path ON report_events(path, id);
 """
 
 # 旧库升级：CREATE TABLE IF NOT EXISTS 不会补列，这里逐列 ALTER。
@@ -63,6 +95,16 @@ EMBED_COLUMNS = {
 
 PUBLIC_COLUMNS = {
     "public": "INTEGER NOT NULL DEFAULT 0",
+}
+
+# v0.3：三类时间戳 + AI 模型溯源（旧库自动补列，新行由写入路径填值）。
+META_COLUMNS = {
+    "created_at": "TEXT NOT NULL DEFAULT ''",
+    "updated_at": "TEXT NOT NULL DEFAULT ''",
+    "read_at": "TEXT NOT NULL DEFAULT ''",
+    "starred_at": "TEXT NOT NULL DEFAULT ''",
+    "public_at": "TEXT NOT NULL DEFAULT ''",
+    "ai_model": "TEXT NOT NULL DEFAULT ''",
 }
 
 AI_COLUMNS = {
@@ -92,15 +134,114 @@ def _connect() -> sqlite3.Connection:
     conn.execute("PRAGMA temp_store=MEMORY")
     conn.executescript(_SCHEMA)
     _ensure_columns(conn)
+    _backfill_meta(conn)
     return conn
 
 
 def _ensure_columns(conn: sqlite3.Connection) -> None:
     """给旧索引库补齐 P1 新增的 AI 列（幂等）。"""
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(reports)")}
-    for column, definition in {**AI_COLUMNS, **EMBED_COLUMNS, **PUBLIC_COLUMNS}.items():
+    for column, definition in {**AI_COLUMNS, **EMBED_COLUMNS, **PUBLIC_COLUMNS, **META_COLUMNS}.items():
         if column not in existing:
             conn.execute(f"ALTER TABLE reports ADD COLUMN {column} {definition}")
+    conn.commit()
+
+
+# ---------- v0.3：标签、事件与时间戳 ----------
+
+
+def _now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def normalize_tag(raw: str) -> str:
+    """标签规范化：去 #、折叠空白、去掉控制字符，长度收敛到 48 字。"""
+    value = str(raw or "").strip().lstrip("#").strip()
+    value = " ".join(value.split())
+    value = "".join(ch for ch in value if ch.isprintable())
+    return value[:48]
+
+
+def _normalize_tags(values) -> list[str]:
+    """标签数组规范化 + 去重（保持首次出现顺序）。"""
+    seen: list[str] = []
+    for value in values or []:
+        tag = normalize_tag(value)
+        if tag and tag not in seen:
+            seen.append(tag)
+    return seen
+
+
+def _tag_list(raw: str) -> list[str]:
+    """把库里的 tags JSON 还原成去重后的规范化标签列表。"""
+    try:
+        values = json.loads(raw or "[]")
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(values, list):
+        return []
+    return _normalize_tags(values)
+
+
+def _record_event(conn: sqlite3.Connection, path: str, kind: str, payload: dict, model: str = "") -> None:
+    conn.execute(
+        "INSERT INTO report_events (path, kind, payload, model, created_at) VALUES (?, ?, ?, ?, ?)",
+        (path, kind, json.dumps(payload, ensure_ascii=False)[:4000], model[:120], _now()),
+    )
+
+
+def _rebuild_report_tags(conn: sqlite3.Connection, path: str, raw_tags: str = "", source: str = "ai") -> None:
+    """把一篇报告的标签 JSON 落到 tags/report_tags（先删后建，幂等）。"""
+    row = conn.execute("SELECT id, tags FROM reports WHERE path = ?", (path,)).fetchone()
+    if row is None:
+        return
+    conn.execute("DELETE FROM report_tags WHERE report_id = ?", (row["id"],))
+    tags = _tag_list(raw_tags if raw_tags else row["tags"])
+    now = _now()
+    for tag in tags:
+        conn.execute(
+            "INSERT INTO tags (name, created_at, updated_at) VALUES (?, ?, ?)"
+            " ON CONFLICT(name) DO UPDATE SET updated_at = excluded.updated_at",
+            (tag, now, now),
+        )
+        tag_id = conn.execute("SELECT id FROM tags WHERE name = ?", (tag,)).fetchone()["id"]
+        conn.execute(
+            "INSERT OR IGNORE INTO report_tags (report_id, tag_id, source, created_at) VALUES (?, ?, ?, ?)",
+            (row["id"], tag_id, source, now),
+        )
+
+
+def _refresh_tag_counts(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "UPDATE tags SET reports = (SELECT COUNT(*) FROM report_tags WHERE report_tags.tag_id = tags.id)"
+    )
+    conn.execute("DELETE FROM tags WHERE reports = 0")
+
+
+def _backfill_meta(conn: sqlite3.Connection) -> None:
+    """给旧库补 v0.3 的时间戳与标签关系（幂等，只在确实缺数据时跑）。
+
+    已有行没有「入库时间」，只能用文件 mtime 近似（写进 created_at）；新行由 sync()
+    写入真实入库时间。标签关系从各行的 tags JSON 重建一次。
+    """
+    missing_time = conn.execute(
+        "SELECT COUNT(*) AS n FROM reports WHERE created_at = ''"
+    ).fetchone()["n"]
+    if missing_time:
+        conn.execute(
+            "UPDATE reports SET created_at = strftime('%Y-%m-%dT%H:%M:%S', mtime, 'unixepoch', 'localtime')"
+            " WHERE created_at = '' AND mtime > 0"
+        )
+        conn.execute("UPDATE reports SET created_at = ? WHERE created_at = ''", (_now(),))
+    conn.execute("UPDATE reports SET updated_at = created_at WHERE updated_at = ''")
+    links = conn.execute("SELECT COUNT(*) AS n FROM report_tags").fetchone()["n"]
+    tagged = conn.execute(
+        "SELECT COUNT(*) AS n FROM reports WHERE tags != '' AND tags != '[]'"
+    ).fetchone()["n"]
+    if not links and tagged:
+        for row in conn.execute("SELECT path FROM reports").fetchall():
+            _rebuild_report_tags(conn, row["path"])
+        _refresh_tag_counts(conn)
     conn.commit()
 
 
@@ -145,6 +286,8 @@ def sync(force: bool = False) -> dict:
                 row["path"]: row
                 for row in conn.execute("SELECT path, size, mtime, title, category, series, date FROM reports")
             }
+            changed: list[str] = []
+            now = _now()
             for path, item in incoming.items():
                 stat_key = (int(item["size"]), int(item["mtime"]))
                 row = existing.get(path)
@@ -158,12 +301,15 @@ def sync(force: bool = False) -> dict:
                 summary, body = _extract_text(kb_index.REPORTS_DIR / path)
                 cursor = conn.execute(
                     """
-                    INSERT INTO reports (path, title, category, series, date, size, mtime, summary, body)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO reports
+                        (path, title, category, series, date, size, mtime, summary, body,
+                         created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(path) DO UPDATE SET
                         title=excluded.title, category=excluded.category, series=excluded.series,
                         date=excluded.date, size=excluded.size, mtime=excluded.mtime,
                         summary=excluded.summary, body=excluded.body,
+                        updated_at=excluded.updated_at,
                         -- 正文变化后旧的 AI sidecar 立即失效，等待重新抽取。
                         summary_ai='', key_points='[]', entities='[]', tags='[]',
                         ai_version=0, ai_at='', ai_error=''
@@ -178,19 +324,59 @@ def sync(force: bool = False) -> dict:
                         stat_key[1],
                         summary,
                         body,
+                        now,
+                        now,
                     ),
                 )
                 if cursor.rowcount:
                     indexed += 1
+                    changed.append(path)
+                    if row is None:
+                        _record_event(
+                            conn,
+                            path,
+                            "ingest",
+                            {
+                                "title": item["title"],
+                                "category": item["category"],
+                                "series": item["series"],
+                                "date": item["date"],
+                            },
+                        )
+                    elif (row["category"], row["series"]) != (item["category"], item["series"]):
+                        _record_event(
+                            conn,
+                            path,
+                            "reclassify",
+                            {
+                                "from": {"category": row["category"], "series": row["series"]},
+                                "to": {"category": item["category"], "series": item["series"]},
+                                "source": "rule",
+                            },
+                        )
+            removed_paths: list[str] = []
             for path in existing.keys() - incoming.keys():
+                _record_event(conn, path, "remove", {"reason": "file-missing"})
                 conn.execute("DELETE FROM reports WHERE path = ?", (path,))
+                removed_paths.append(path)
                 removed += 1
+            # 有标签的报告重建标签关系；被删除的报告由计数刷新兜底清掉。
+            for path in changed:
+                _rebuild_report_tags(conn, path)
+            if changed or removed_paths:
+                _refresh_tag_counts(conn)
             conn.commit()
             total = conn.execute("SELECT COUNT(*) FROM reports").fetchone()[0]
         finally:
             conn.close()
     _indexed_at = time.time()
-    return {"indexed": indexed, "removed": removed, "total": total, "scan_total": len(items)}
+    return {
+        "indexed": indexed,
+        "removed": removed,
+        "total": total,
+        "scan_total": len(items),
+        "synced_at": _now(),
+    }
 
 
 # ---------- 查询 ----------
@@ -231,10 +417,17 @@ def _row_to_item(row: sqlite3.Row) -> dict:
         "ai_version": row["ai_version"] or 0,
         "ai_at": row["ai_at"] or "",
         "ai_error": row["ai_error"] or "",
+        "ai_model": row["ai_model"] or "",
         # P2：是否已有语义向量（前端可据此显示「语义可检索」状态）。
         "has_embedding": bool(row["embedding"]),
         # P6：是否已公开（可被匿名只读访问）。
         "public": bool(row["public"]),
+        # v0.3：时间线（入库/索引/操作），用于「最近上传/最近读过」与审计。
+        "created_at": row["created_at"] or "",
+        "updated_at": row["updated_at"] or "",
+        "read_at": row["read_at"] or "",
+        "starred_at": row["starred_at"] or "",
+        "public_at": row["public_at"] or "",
     }
 
 
@@ -255,6 +448,7 @@ def list_reports(
     q: str = "",
     category: str = "",
     series: str = "",
+    tag: str = "",
     date_from: str = "",
     date_to: str = "",
     view: str = "all",
@@ -274,6 +468,13 @@ def list_reports(
     if series:
         where.append("series = ?")
         params.append(series)
+    tag = normalize_tag(tag)
+    if tag:
+        where.append(
+            "id IN (SELECT report_tags.report_id FROM report_tags"
+            " JOIN tags ON tags.id = report_tags.tag_id WHERE tags.name = ?)"
+        )
+        params.append(tag)
     date_from = _norm_date(date_from)
     date_to = _norm_date(date_to)
     if date_from:
@@ -338,6 +539,7 @@ def _filter_clause(
     view: str = "all",
     *,
     include_dates: bool = True,
+    tag: str = "",
 ) -> tuple[str, list[object]]:
     """把列表筛选条件拼成 WHERE，供 tree() 统计「当前筛选下的」计数。"""
     keyword = (q or "").strip()
@@ -346,6 +548,13 @@ def _filter_clause(
     if keyword:
         where.append("(title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')")
         params.extend([_like(keyword), _like(keyword)])
+    tag = normalize_tag(tag)
+    if tag:
+        where.append(
+            "id IN (SELECT report_tags.report_id FROM report_tags"
+            " JOIN tags ON tags.id = report_tags.tag_id WHERE tags.name = ?)"
+        )
+        params.append(tag)
     if include_dates:
         df, dt = _norm_date(date_from), _norm_date(date_to)
         if df:
@@ -369,6 +578,7 @@ def tree(
     date_from: str = "",
     date_to: str = "",
     view: str = "all",
+    tag: str = "",
 ) -> dict:
     """层次导航树。
 
@@ -376,8 +586,10 @@ def tree(
     分类数字跟着收敛）；series 只统计当前选中分类；时间列表按 q/view 过滤但不按
     日期过滤，否则选完某天就看不到其它日期了。
     """
-    clause, params = _filter_clause(q, date_from, date_to, view)
-    date_clause, date_params = _filter_clause(q, date_from, date_to, view, include_dates=False)
+    clause, params = _filter_clause(q, date_from, date_to, view, tag=tag)
+    date_clause, date_params = _filter_clause(
+        q, date_from, date_to, view, include_dates=False, tag=tag
+    )
     conn = _connect()
     try:
         total = conn.execute(f"SELECT COUNT(*) AS n FROM reports WHERE {clause}", params).fetchone()["n"]
@@ -424,6 +636,8 @@ def tree(
         "categories": categories,
         "series": series,
         "dates": dates,
+        # 标签导航（全局 top N，不受当前筛选影响，方便随时换标签）。
+        "tags": tags_overview(limit=15),
     }
 
 
@@ -491,24 +705,41 @@ def get_report(path: str) -> dict | None:
 def set_state(path: str, read: bool | None = None, starred: bool | None = None) -> dict | None:
     assignments = []
     params: list[object] = []
+    now = _now()
+    event: dict[str, object] = {}
     if read is not None:
-        assignments.append("read = ?")
-        params.append(1 if read else 0)
+        assignments.append("read = ?, read_at = ?")
+        params.extend([1 if read else 0, now if read else ""])
+        event["read"] = bool(read)
     if starred is not None:
-        assignments.append("starred = ?")
-        params.append(1 if starred else 0)
+        assignments.append("starred = ?, starred_at = ?")
+        params.extend([1 if starred else 0, now if starred else ""])
+        event["starred"] = bool(starred)
     if not assignments:
         return get_report(path)
     conn = _connect()
     try:
-        conn.execute(f"UPDATE reports SET {', '.join(assignments)} WHERE path = ?", [*params, path])
+        conn.execute(
+            f"UPDATE reports SET {', '.join(assignments)}, updated_at = ? WHERE path = ?",
+            [*params, now, path],
+        )
+        if event:
+            _record_event(conn, path, "state", event)
         conn.commit()
-        row = conn.execute("SELECT path, read, starred FROM reports WHERE path = ?", (path,)).fetchone()
+        row = conn.execute(
+            "SELECT path, read, starred, read_at, starred_at FROM reports WHERE path = ?", (path,)
+        ).fetchone()
     finally:
         conn.close()
     if not row:
         return None
-    return {"path": row["path"], "read": bool(row["read"]), "starred": bool(row["starred"])}
+    return {
+        "path": row["path"],
+        "read": bool(row["read"]),
+        "starred": bool(row["starred"]),
+        "read_at": row["read_at"] or "",
+        "starred_at": row["starred_at"] or "",
+    }
 
 
 # ---------- P6：公开报告（对外只读共享） ----------
@@ -526,15 +757,20 @@ def bulk_update(
     """
     assignments: list[str] = []
     params: list[object] = []
+    now = _now()
+    event: dict[str, object] = {}
     if read is not None:
-        assignments.append("read = ?")
-        params.append(1 if read else 0)
+        assignments.append("read = ?, read_at = ?")
+        params.extend([1 if read else 0, now if read else ""])
+        event["read"] = bool(read)
     if starred is not None:
-        assignments.append("starred = ?")
-        params.append(1 if starred else 0)
+        assignments.append("starred = ?, starred_at = ?")
+        params.extend([1 if starred else 0, now if starred else ""])
+        event["starred"] = bool(starred)
     if public is not None:
-        assignments.append("public = ?")
-        params.append(1 if public else 0)
+        assignments.append("public = ?, public_at = ?")
+        params.extend([1 if public else 0, now if public else ""])
+        event["public"] = bool(public)
     unique = list(dict.fromkeys(paths))
     if not assignments or not unique:
         return {"updated": 0, "missing": unique[:20], "paths": []}
@@ -542,13 +778,15 @@ def bulk_update(
     conn = _connect()
     try:
         cursor = conn.execute(
-            f"UPDATE reports SET {', '.join(assignments)} WHERE path IN ({placeholders})",
-            [*params, *unique],
+            f"UPDATE reports SET {', '.join(assignments)}, updated_at = ? WHERE path IN ({placeholders})",
+            [*params, now, *unique],
         )
         updated = cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
         rows = conn.execute(
             f"SELECT path FROM reports WHERE path IN ({placeholders})", unique
         ).fetchall()
+        for row in rows:
+            _record_event(conn, row["path"], "state", {"bulk": True, **event})
         conn.commit()
     finally:
         conn.close()
@@ -571,14 +809,21 @@ def set_public(path: str, public: bool) -> dict | None:
     """切换单篇报告的公开状态；报告不在索引里时返回 None。"""
     conn = _connect()
     try:
-        conn.execute("UPDATE reports SET public = ? WHERE path = ?", (1 if public else 0, path))
+        now = _now()
+        conn.execute(
+            "UPDATE reports SET public = ?, public_at = ?, updated_at = ? WHERE path = ?",
+            (1 if public else 0, now if public else "", now, path),
+        )
+        _record_event(conn, path, "public", {"public": bool(public)})
         conn.commit()
-        row = conn.execute("SELECT path, public FROM reports WHERE path = ?", (path,)).fetchone()
+        row = conn.execute(
+            "SELECT path, public, public_at FROM reports WHERE path = ?", (path,)
+        ).fetchone()
     finally:
         conn.close()
     if not row:
         return None
-    return {"path": row["path"], "public": bool(row["public"])}
+    return {"path": row["path"], "public": bool(row["public"]), "public_at": row["public_at"] or ""}
 
 
 # ---------- P1：AI sidecar（摘要/要点/实体/标签） ----------
@@ -628,22 +873,39 @@ def next_pending(limit: int = 3, *, include_failed: bool = False) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-def set_ai(path: str, payload: dict) -> None:
-    """写入抽取结果；调用方保证 payload 已清洗。"""
+def set_ai(path: str, payload: dict, model: str = "") -> None:
+    """写入抽取结果；调用方保证 payload 已清洗。同时落标签关系与变更轨迹。"""
+    tags_json = json.dumps(_normalize_tags(payload.get("tags")), ensure_ascii=False)
+    now = _now()
     conn = _connect()
     try:
         conn.execute(
             "UPDATE reports SET summary_ai = ?, key_points = ?, entities = ?, tags = ?,"
-            " ai_version = ?, ai_at = ?, ai_error = '' WHERE path = ?",
+            " ai_version = ?, ai_at = ?, ai_model = ?, ai_error = '', updated_at = ? WHERE path = ?",
             (
                 str(payload.get("summary_ai") or "")[:400],
                 json.dumps(payload.get("key_points") or [], ensure_ascii=False),
                 json.dumps(payload.get("entities") or [], ensure_ascii=False),
-                json.dumps(payload.get("tags") or [], ensure_ascii=False),
+                tags_json,
                 int(payload.get("ai_version") or AI_VERSION),
-                time.strftime("%Y-%m-%dT%H:%M:%S"),
+                now,
+                str(model or "")[:120],
+                now,
                 path,
             ),
+        )
+        _rebuild_report_tags(conn, path, tags_json)
+        _refresh_tag_counts(conn)
+        _record_event(
+            conn,
+            path,
+            "ai_enrich",
+            {
+                "tags": _tag_list(tags_json),
+                "summary_len": len(str(payload.get("summary_ai") or "")),
+                "ai_version": int(payload.get("ai_version") or AI_VERSION),
+            },
+            model=model,
         )
         conn.commit()
     finally:
@@ -654,12 +916,71 @@ def set_ai_error(path: str, message: str) -> None:
     conn = _connect()
     try:
         conn.execute(
-            "UPDATE reports SET ai_error = ?, ai_at = ? WHERE path = ?",
-            (str(message)[:300], time.strftime("%Y-%m-%dT%H:%M:%S"), path),
+            "UPDATE reports SET ai_error = ?, ai_at = ?, updated_at = ? WHERE path = ?",
+            (str(message)[:300], _now(), _now(), path),
         )
+        _record_event(conn, path, "ai_error", {"error": str(message)[:300]})
         conn.commit()
     finally:
         conn.close()
+
+
+# ---------- v0.3：标签导航与变更轨迹查询 ----------
+
+
+def tags_overview(keyword: str = "", limit: int = 200) -> list[dict]:
+    """标签列表（按报告数倒序）；keyword 做前缀/包含匹配。"""
+    conn = _connect()
+    try:
+        if keyword.strip():
+            rows = conn.execute(
+                "SELECT name, reports, updated_at FROM tags WHERE name LIKE ? ESCAPE '\\'"
+                " ORDER BY reports DESC, name ASC LIMIT ?",
+                (_like(keyword.strip()) + "%", int(limit)),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT name, reports, updated_at FROM tags ORDER BY reports DESC, name ASC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {"name": row["name"], "reports": int(row["reports"] or 0), "updated_at": row["updated_at"] or ""}
+        for row in rows
+        if int(row["reports"] or 0) > 0
+    ]
+
+
+def events_for(path: str = "", limit: int = 50) -> list[dict]:
+    """变更轨迹（append-only）：默认取全部，传 path 只看一篇。"""
+    conn = _connect()
+    try:
+        if path:
+            rows = conn.execute(
+                "SELECT id, path, kind, payload, model, created_at FROM report_events"
+                " WHERE path = ? ORDER BY id DESC LIMIT ?",
+                (path, int(limit)),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, path, kind, payload, model, created_at FROM report_events"
+                " ORDER BY id DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+    finally:
+        conn.close()
+    return [
+        {
+            "id": int(row["id"]),
+            "path": row["path"],
+            "kind": row["kind"],
+            "payload": _load_json(row["payload"], {}),
+            "model": row["model"] or "",
+            "at": row["created_at"] or "",
+        }
+        for row in rows
+    ]
 
 
 # ---------- P2：语义向量与混合检索 ----------
