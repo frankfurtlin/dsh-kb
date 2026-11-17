@@ -17,6 +17,23 @@ import { fileURLToPath } from 'node:url'
 const require = createRequire('/root/workspace/hermes-site/tools/node_modules/')
 const { chromium } = require('playwright')
 
+// Playwright 与浏览器 revision 可能失配（hermes-site/tools 会升级）：优先用环境变量，
+// 否则在默认缺失时回退到本机已有的 headless shell。
+const FALLBACK_CHROME =
+  '/root/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell'
+
+async function launchBrowser() {
+  const options = { headless: true, args: ['--no-sandbox'] }
+  if (process.env.KB_CHROMIUM) return chromium.launch({ ...options, executablePath: process.env.KB_CHROMIUM })
+  try {
+    return await chromium.launch(options)
+  } catch (error) {
+    if (!String(error).includes('Executable doesn\'t exist')) throw error
+    console.warn('[playwright] 默认浏览器缺失，回退到 chromium 1243：' + FALLBACK_CHROME)
+    return chromium.launch({ ...options, executablePath: FALLBACK_CHROME })
+  }
+}
+
 const args = process.argv.slice(2)
 function arg(name, fallback) {
   const index = args.indexOf(`--${name}`)
@@ -37,7 +54,7 @@ function check(name, ok, detail = '') {
 }
 const pluginErrorPattern = /(dsh-kb|\/kb\/)/i
 
-const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] })
+const browser = await launchBrowser()
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 const page = await context.newPage()
 const consoleErrors = []
@@ -179,6 +196,18 @@ try {
     await frame.click('#kb-digest .kb-ask-foot .kb-btn-primary')
     await page.waitForTimeout(300)
   }
+
+  // P10：Wiki 图谱（iframe 内从侧栏入口进入，验证 wiki 页可浏览）
+  await frame.click('#kb-wiki-entry')
+  await page.waitForTimeout(1500)
+  const wikiFrame = page.frames().find((item) => item.url().includes('/kb/wiki/'))
+  const wikiTitle = wikiFrame ? await wikiFrame.title() : ''
+  const wikiLinks = wikiFrame ? await wikiFrame.locator('a[href]').count() : 0
+  check('iframe 内打开 Wiki 图谱页', Boolean(wikiFrame) && wikiTitle.includes('Wiki') && wikiLinks > 10,
+    `title=${wikiTitle} links=${wikiLinks}`)
+  await page.screenshot({ path: join(OUT, '20-dsh-wiki.png'), fullPage: true })
+  await page.goto(URL)
+  await page.waitForTimeout(600)
 
   check('本插件相关 console error 为空', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
 } catch (error) {

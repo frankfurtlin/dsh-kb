@@ -115,3 +115,14 @@ EMBED_INTERVAL = max(0.5, float(os.environ.get("KB_EMBED_INTERVAL", "2") or 2))
 # 混合检索权重：语义分 / 词法命中 / 新鲜度加成。
 HYBRID_WEIGHT_SEMANTIC = float(os.environ.get("KB_HYBRID_SEMANTIC", "0.62") or 0.62)
 HYBRID_WEIGHT_LEXICAL = float(os.environ.get("KB_HYBRID_LEXICAL", "0.38") or 0.38)
+
+# ---------- P10：知识图谱 + LLM Wiki（wiki 页是 reports 的派生物） ----------
+# wiki 目录：markdown 页 + SCHEMA/index/log 元数据，可直接用 Obsidian 打开浏览。
+# 默认放在插件根目录（而不是 data/），方便用户把整个目录当 Obsidian vault 同步；
+# 内容由编译任务重写，不要手工只改文件（改了请重跑编译）。
+WIKI_DIR = _path_env("KB_WIKI_DIR", str(PLUGIN_ROOT / "wiki"))
+WIKI_AUTO = os.environ.get("KB_WIKI_AUTO", "1").strip().lower() not in ("0", "false", "no", "off")
+# 一个实体至少在多少篇报告里出现才为它建 wiki 页（1 = 全建，可能上千页）。
+WIKI_MIN_REPORTS = max(1, int(os.environ.get("KB_WIKI_MIN_REPORTS", "2") or 2))
+# 单次编译最多生成多少页（防止一次把长尾全铺开）。
+WIKI_MAX_PAGES = max(1, int(os.environ.get("KB_WIKI_MAX_PAGES", "400") or 400))

@@ -1,0 +1,345 @@
+---
+title: Minecraft Java版
+slug: minecraft-java版
+kind: entity
+entity_type: 产品
+report_count: 267
+updated_at: 2026-11-17T21:27:30
+---
+
+# Minecraft Java版
+
+> 产品 · 267 篇报告提及 · 首次 2026-09-22 · 最近 2026-09-22
+
+## 概述
+
+「Minecraft Java版」在知识库的 267 篇报告中被提及，主要集中在 Minecraft 版本。
+
+## 相关报告
+
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_10a.html|Minecraft Java版 0.0.10a - 版本记录]] — Minecraft Java版0.0.10a是2009年5月17日完成的Classic阶段版本，仅修复一个漏洞并加入按某键解除鼠标锁定、暂停游戏的控制功能，同时增强了性能稳定性。该版本原计划公开发布，但因Notch忘记替换正常启动与关闭函数
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_12a.html|Minecraft Java版 0.0.12a - 版本记录]] — Minecraft Java版0.0.12a 是 Classic 阶段的早期创造更新，发布于2009年5月19日。本次共6项新增、4项更改：新增基岩、水、熔岩三种方块，加入熔岩湖与湖泊地表生成，并引入新的地形生成器；更改包括世界底部改为无尽
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_12a_01.html|Minecraft Java版 0.0.12a_01 - 版本记录]] — Minecraft Java版0.0.12a_01是Classic阶段0.0.12a的漏洞修复版本，发布于2009年5月19日。该版本仅有一项更改：创建新世界时会重置生物。内容依据中文Minecraft Wiki原始记录整理，页面生成于20
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_12a_02.html|Minecraft Java版 0.0.12a_02 - 版本记录]] — 该页为 Minecraft Java 版 0.0.12a_02 的版本记录，属于 Classic 阶段、早期创造大版本。0.0.12a_02 发布于 2009 年 5 月 19 日，是 0.0.12a 的漏洞修复版本。此次更新仅含 1 项常
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_13a.html|Minecraft Java版 0.0.13a - 版本记录]] — Minecraft Java版0.0.13a 属 Classic 阶段，2009年5月22日发布，新增暂停菜单与面向登录玩家的5槽位世界存档，调整树苗纹理、熔岩透明度与迷雾颜色、地形及崖面生成，修正 HUD 手持方块显示、跳跃高度与游泳速度
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_13a_03.html|Minecraft Java版 0.0.13a_03 - 版本记录]] — 该页是Minecraft Java版0.0.13a_03的版本记录，属于Classic阶段早期创造版本，正式发布于2009年5月22日，是0.0.13a的漏洞修复版，共3项更改，涉及生物、世界生成和常规。生物不再自然生成，熔岩湖不再于海平面
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_14a.html|Minecraft Java版 0.0.14a - 版本记录]] — Minecraft Java版0.0.14a于2009年5月27日发布，属Classic早期创造阶段。该版本新增沙子、沙砾、金矿石、铁矿石、煤矿石、木头与树叶等方块，并加入由树叶和原木组成的树木。世界生成方面引入普通、大型、小型三种世界大小
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_14a_03.html|Minecraft Java版 0.0.14a_03 - 版本记录]] — 该页面是Minecraft Java版0.0.14a_03的版本记录，属于Classic阶段的早期创造版本，正式发布于2009年5月27日。它是0.0.14a的漏洞修复版本，共记录2项更新内容。数据依据中文Minecraft Wiki的原始
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_14a_06.html|Minecraft Java版 0.0.14a_06 - 版本记录]] — Minecraft Java版 0.0.14a_06 属 Classic 阶段早期创造版本，发布于2009年5月28日，为 0.0.14a 的漏洞修复版本。本次仅有一项常规更改：再次尝试修复鼠标移动问题，但鼠标快速移动时该漏洞仍会出现。内容
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_14a_08.html|Minecraft Java版 0.0.14a_08 - 版本记录]] — 本文是 Minecraft Java 版 0.0.14a_08 的版本记录。该版本属于 Classic 阶段的早期创造版本，是 0.0.14a 的漏洞修复版，于 2009 年 5 月 28 日发布。更新共 3 项，涉及方块 2 项、常规 1
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_15a_01.html|Minecraft Java版 0.0.15a_01 - 版本记录]] — Minecraft Java版Classic阶段0.0.15a_01的版本记录页，该版本为0.0.15a的漏洞修复版，发布于2009年6月4日，仅修复一个漏洞，属多人测试大版本。页面共列2项更新内容，数据取自中文Minecraft Wiki
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_15a_02.html|Minecraft Java版 0.0.15a_02 - 版本记录]] — 该页面为 Minecraft Java 版 0.0.15a_02 的版本记录，属于 Classic 阶段的多人测试系列。该版本发布于 2009 年 6 月 4 日，是 0.0.15a 的漏洞修复版本，但具体更改内容未知。页面共记录 2 项更
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_15a_03.html|Minecraft Java版 0.0.15a_03 - 版本记录]] — 本文是Minecraft Java版Classic阶段0.0.15a_03的版本记录，该版本于2009年6月4日发布，属于0.0.15a的漏洞修复版本。更新内容极少：新增一项游戏内容，即多人游戏中增加关于无效协议的错误消息；更改一项常规逻辑
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_16a.html|Minecraft Java版 0.0.16a - 版本记录]] — Minecraft Java版Classic 0.0.16a于2009年6月7日发布，属于多人测试阶段。本次更新新增7项命令格式，包括op、deop、ban、unban、banip、broadcast和kick，用于管理玩家身份、封禁玩家与
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_16a_01.html|Minecraft Java版 0.0.16a_01 - 版本记录]] — 该页面为 Minecraft Java版 Classic 阶段 0.0.16a_01 的版本记录。该版本是 0.0.16a 的漏洞修复版，发布于 2009 年 6 月 7 日，属多人测试大版本，共记录 2 项更新内容，修复了一个漏洞。内容依
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_16a_02.html|Minecraft Java版 0.0.16a_02 - 版本记录]] — Minecraft Java版Classic阶段的0.0.16a_02版本记录，发布于2009年6月7日，是0.0.16a的漏洞修复版本。该版本正式加入多人游戏功能，并在多人模式中新增方块粒子效果，同时修复了玩家可在其他玩家所在位置放置方块
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_18a_01.html|Minecraft Java版 0.0.18a_01 - 版本记录]] — Minecraft Java版0.0.18a_01是Classic阶段0.0.18a的漏洞修复版本，发布于2009年6月13日，属于多人测试大版本，配套Java版Classic服务器1.4。官方原始记录称该版本的具体更改未知，页面内容依据中
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_19a.html|Minecraft Java版 0.0.19a - 版本记录]] — Java版0.0.19a属Classic阶段多人测试版本，发布于2009年6月19日。新增海绵、玻璃两种方块与快捷栏，水与熔岩改为动态纹理；因空间不足从物品栏移除圆石和沙子；服务器不再生成或存储世界并限制帧率，同时修复一个漏洞。
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_19a_01.html|Minecraft Java版 0.0.19a_01 - 版本记录]] — Minecraft Java版Classic 0.0.19a_01是0.0.19a的漏洞修复版本，发布于2009年6月19日，属多人测试阶段，对应Classic服务器1.6。此次仅改动两个方块：玻璃更换纹理、取消半透明，使其被选中、地下或透
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_19a_02.html|Minecraft Java版 0.0.19a_02 - 版本记录]] — 该页面记录 Minecraft Java 版 Classic 阶段 0.0.19a_02 的版本信息。该版本是 0.0.19a 的漏洞修复版本，发布于 2009 年 6 月 19 日，对应 Java 版 Classic 服务器 1.6。本次
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_19a_03.html|Minecraft Java版 0.0.19a_03 - 版本记录]] — Minecraft Java版0.0.19a_03版本记录页。该版本属Classic阶段多人测试，为0.0.19a的漏洞修复版，2009年6月20日发布，共2项更新，修复若干漏洞。数据源自中文Minecraft Wiki及2009年6月19
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_19a_04.html|Minecraft Java版 0.0.19a_04 - 版本记录]] — Minecraft Java版 Classic 0.0.19a_04 是 0.0.19a 的一个漏洞修复版本，发布于2009年6月20日。该版本仅有一项常规更改：再次尝试修复玩家在下载存档时因发送移动数据、跑步过快而被错误踢出的问题，但修复
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_19a_06.html|Minecraft Java版 0.0.19a_06 - 版本记录]] — Minecraft Java版Classic阶段的0.0.19a_06是0.0.19a的漏洞修复版本，发布于2009年6月20日。该版本仅有一项常规更改：尝试修复先前版本中系统计时器故障，但修复未完全成功，仅对一名玩家有效、对另一名无效。内
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_20a.html|Minecraft Java版 0.0.20a - 版本记录]] — 0.0.20a是Minecraft Java版Classic阶段的一次更新，发布于2009年6月20日。该版本共含7项新增与3项调整：加入十六色布料、蒲公英、玫瑰、红棕蘑菇与金块，首次引入物品栏和快捷栏，新增solid命令，并反转鼠标滚轮选
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_20a_02.html|Minecraft Java版 0.0.20a_02 - 版本记录]] — 该页面是Minecraft Java版0.0.20a_02的版本记录。0.0.20a_02为0.0.20a的漏洞修复版本，发布于2009年6月20日，属Classic阶段多人测试系列，共含2项更新内容。内容依据中文Minecraft Wik
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_21a.html|Minecraft Java版 0.0.21a - 版本记录]] — Minecraft Java版0.0.21a属于Classic阶段多人测试系列，于2009年6月22日发布，是一次修复漏洞的小型更新。本次更新共3项更改：物品栏增加灰色背景并支持行走时修改物品槽位；世界生成的雕饰阶段被略微修改，导致生成世界
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_21a_01.html|Minecraft Java版 0.0.21a_01 - 版本记录]] — Minecraft Java版0.0.21a_01是Classic阶段多人测试的漏洞修复版本，发布于2009年6月23日。此次仅有一项常规更改：为裁剪添加最大迭代次数以尝试修复“悬挂漏洞”，但游戏仍会在随机时间突然卡死。记录参考Archiv
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_22a_01.html|Minecraft Java版 0.0.22a_01 - 版本记录]] — 0.0.22a_01是Minecraft Java版Classic阶段多人测试的一个漏洞修复版本，发布于2009年6月29日，对应Java版Classic服务器1.8.2。该版本仅有一项常规更改：按键现在会静音，并尝试修复声音断断续续的问题
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_22a_02.html|Minecraft Java版 0.0.22a_02 - 版本记录]] — Minecraft Java版0.0.22a_02属于Classic阶段多人测试分支，是0.0.22a的漏洞修复版本，发布于2009年6月29日。该版本仅有一项常规更改：尝试修复声音断断续续的问题。这次修复对部分玩家有效，但对另一些玩家无效
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_22a_04.html|Minecraft Java版 0.0.22a_04 - 版本记录]] — 该页面为Minecraft Java版0.0.22a_04的版本记录，属于Classic阶段的多人测试分支，对应Java版Classic服务器1.8.2。该版本于2009年6月29日发布，是0.0.22a的漏洞修复版本，共记录1项更新内容，
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_23a_01.html|Minecraft Java版 0.0.23a_01 - 版本记录]] — Minecraft Java版0.0.23a_01是0.0.23a的漏洞修复版本，2009年7月12日发布，属Classic阶段多人测试。主要更改是加入控制渲染距离的键盘映射，玩家可按键切换渲染距离。十周年时官方用JavaScript重制该
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_2a.html|Minecraft Java版 0.0.2a - 版本记录]] — 该条目记录Minecraft Java版0.0.2a，属Classic早期创造阶段，于2009年5月16日16:52 UTC完成。版本加入版本号并修复漏洞，平视显示器左上角显示版本号；Notch称其相对稳定，下载链接曾通过IRC分享。
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_3a.html|Minecraft Java版 0.0.3a - 版本记录]] — 本文是Minecraft Java版0.0.3a的版本记录，属于Classic阶段、早期创造大版本。该版本于2009年5月16日18:05（UTC）制作完成，更新共1项，为世界生成中的洞穴，洞穴会在地表下随机生成。内容依据中文Minecra
+- 2026-09-22 [[report:20260922/mc-versions/v_0_0_9a.html|Minecraft Java版 0.0.9a - 版本记录]] — Minecraft Java版Classic 0.0.9a于2009年5月16日19:15（UTC）完成，属早期创造阶段。该版本新增帧率与区块更新计数器HUD，右键可在放置与破坏模式间切换；同时更改木板纹理、为选中方块添加轮廓，并将分辨率由
+- 2026-09-22 [[report:20260922/mc-versions/v_0_1_2_01.html|Minecraft Java版 0.1.2_01 - 版本记录]] — 该页面记录 Minecraft Java 版服务端 0.1.2_01 的版本信息：它属于 Alpha 阶段的 Alpha v1.0 大版本，2010年8月12日与客户端 1.0.16_01 同步发布，共有 1 项更新内容，即修复一个漏洞。内
+- 2026-09-22 [[report:20260922/mc-versions/v_0_1_3.html|Minecraft Java版 0.1.3 - 版本记录]] — Minecraft Java版服务端0.1.3版本记录，对应客户端1.0.16_02，2010年8月17日发布，修复一个漏洞。新增msg私信与list在线玩家列表命令，服务器记录并广播OP命令；OP可在出生点区域建造。内容据中文Minecr
+- 2026-09-22 [[report:20260922/mc-versions/v_0_24_SURVIVAL_TEST.html|Minecraft Java版 0.24_SURVIVAL_TEST - 版本记录]] — Minecraft Java版0.24_SURVIVAL_TEST 是生存测试的首个版本，2009年9月1日发布，首次加入生存模式。新增箭、告示牌两种非生物实体，苦力怕、猪、骷髅、僵尸四种生物，以及生命值、死亡机制、游戏菜单与盔甲等内容；同
+- 2026-09-22 [[report:20260922/mc-versions/v_0_24_SURVIVAL_TEST_01.html|Minecraft Java版 0.24_SURVIVAL_TEST_01 - 版本记录]] — 0.24_SURVIVAL_TEST_01是Minecraft Java版Classic阶段生存测试的一个漏洞修复版本，发布于2009年9月1日。该版本仅有一项常规更改，即尝试修复一个崩溃漏洞，但未能成功。内容依据中文Minecraft W
+- 2026-09-22 [[report:20260922/mc-versions/v_0_24_SURVIVAL_TEST_02.html|Minecraft Java版 0.24_SURVIVAL_TEST_02 - 版本记录]] — 该页记录 Minecraft Java 版 0.24_SURVIVAL_TEST_02 的版本信息。它属于 Classic 阶段的生存测试系列，是 0.24_SURVIVAL_TEST 的漏洞修复版本，发布于 2009 年 9 月 1 日。
+- 2026-09-22 [[report:20260922/mc-versions/v_0_25_05_SURVIVAL_TEST.html|Minecraft Java版 0.25_05 SURVIVAL TEST - 版本记录]] — Minecraft Java版0.25_05 SURVIVAL TEST的版本记录页，属Classic阶段生存测试，2009年9月3日发布，为0.25 SURVIVAL TEST的漏洞修复版，仅一项更改：自定义皮肤可显示在玩家手臂上。页面还
+- …另有 227 篇
+
+## 相关实体
+
+- [[alpha-v1.0|Alpha v1.0]]（共同出现 70 篇）
+- [[indev-0.31|Indev 0.31]]（共同出现 60 篇）
+- [[中文minecraft-wiki|中文Minecraft Wiki]]（共同出现 51 篇）
+- [[mojang|Mojang]]（共同出现 37 篇）
+- [[notch|Notch]]（共同出现 26 篇）
+- [[classic-0.x|Classic 0.x]]（共同出现 17 篇）
+- [[漏洞修复|漏洞修复]]（共同出现 13 篇）
+- [[世界生成|世界生成]]（共同出现 10 篇）
+
+## 标签
+
+`#Minecraft`(231) `#Java版`(197) `#版本更新`(128) `#Alpha`(118) `#版本记录`(112) `#漏洞修复`(101) `#Indev`(77) `#Classic`(38) `#Infdev`(32) `#游戏机制`(31) `#我的世界`(27) `#世界生成`(26)
+
+## 来源
+
+- reports/20260922/mc-versions/v_0_0_10a.html
+- reports/20260922/mc-versions/v_0_0_12a.html
+- reports/20260922/mc-versions/v_0_0_12a_01.html
+- reports/20260922/mc-versions/v_0_0_12a_02.html
+- reports/20260922/mc-versions/v_0_0_13a.html
+- reports/20260922/mc-versions/v_0_0_13a_03.html
+- reports/20260922/mc-versions/v_0_0_14a.html
+- reports/20260922/mc-versions/v_0_0_14a_03.html
+- reports/20260922/mc-versions/v_0_0_14a_06.html
+- reports/20260922/mc-versions/v_0_0_14a_08.html
+- reports/20260922/mc-versions/v_0_0_15a_01.html
+- reports/20260922/mc-versions/v_0_0_15a_02.html
+- reports/20260922/mc-versions/v_0_0_15a_03.html
+- reports/20260922/mc-versions/v_0_0_16a.html
+- reports/20260922/mc-versions/v_0_0_16a_01.html
+- reports/20260922/mc-versions/v_0_0_16a_02.html
+- reports/20260922/mc-versions/v_0_0_18a_01.html
+- reports/20260922/mc-versions/v_0_0_19a.html
+- reports/20260922/mc-versions/v_0_0_19a_01.html
+- reports/20260922/mc-versions/v_0_0_19a_02.html
+- reports/20260922/mc-versions/v_0_0_19a_03.html
+- reports/20260922/mc-versions/v_0_0_19a_04.html
+- reports/20260922/mc-versions/v_0_0_19a_06.html
+- reports/20260922/mc-versions/v_0_0_20a.html
+- reports/20260922/mc-versions/v_0_0_20a_02.html
+- reports/20260922/mc-versions/v_0_0_21a.html
+- reports/20260922/mc-versions/v_0_0_21a_01.html
+- reports/20260922/mc-versions/v_0_0_22a_01.html
+- reports/20260922/mc-versions/v_0_0_22a_02.html
+- reports/20260922/mc-versions/v_0_0_22a_04.html
+- reports/20260922/mc-versions/v_0_0_23a_01.html
+- reports/20260922/mc-versions/v_0_0_2a.html
+- reports/20260922/mc-versions/v_0_0_3a.html
+- reports/20260922/mc-versions/v_0_0_9a.html
+- reports/20260922/mc-versions/v_0_1_2_01.html
+- reports/20260922/mc-versions/v_0_1_3.html
+- reports/20260922/mc-versions/v_0_24_SURVIVAL_TEST.html
+- reports/20260922/mc-versions/v_0_24_SURVIVAL_TEST_01.html
+- reports/20260922/mc-versions/v_0_24_SURVIVAL_TEST_02.html
+- reports/20260922/mc-versions/v_0_25_05_SURVIVAL_TEST.html
+- reports/20260922/mc-versions/v_0_25_SURVIVAL_TEST.html
+- reports/20260922/mc-versions/v_0_26_SURVIVAL_TEST.html
+- reports/20260922/mc-versions/v_0_27_SURVIVAL_TEST.html
+- reports/20260922/mc-versions/v_0_29.html
+- reports/20260922/mc-versions/v_0_29_02.html
+- reports/20260922/mc-versions/v_0_2_0_01.html
+- reports/20260922/mc-versions/v_0_2_2.html
+- reports/20260922/mc-versions/v_0_2_2_01.html
+- reports/20260922/mc-versions/v_0_2_5_01.html
+- reports/20260922/mc-versions/v_0_2_5_02.html
+- reports/20260922/mc-versions/v_0_2_6_01.html
+- reports/20260922/mc-versions/v_0_2_6_02.html
+- reports/20260922/mc-versions/v_0_2_7.html
+- reports/20260922/mc-versions/v_1_13_2.html
+- reports/20260922/mc-versions/v_1_14_3.html
+- reports/20260922/mc-versions/v_1_15_2.html
+- reports/20260922/mc-versions/v_1_16_3.html
+- reports/20260922/mc-versions/v_1_18.html
+- reports/20260922/mc-versions/v_1_2.html
+- reports/20260922/mc-versions/v_1_21_3.html
+- reports/20260922/mc-versions/v_1_21_4.html
+- reports/20260922/mc-versions/v_1_21_6.html
+- reports/20260922/mc-versions/v_1_2_2.html
+- reports/20260922/mc-versions/v_1_2_3.html
+- reports/20260922/mc-versions/v_1_4.html
+- reports/20260922/mc-versions/v_1_4_6.html
+- reports/20260922/mc-versions/v_1_6.html
+- reports/20260922/mc-versions/v_1_7.html
+- reports/20260922/mc-versions/v_1_7_10.html
+- reports/20260922/mc-versions/v_1_8_5.html
+- reports/20260922/mc-versions/v_26_1_2.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_1.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_12.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_13.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_13_01.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_14.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_15.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_16.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_16_01.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_16_02.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_17.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_17_01.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_17_02.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_17_03.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_17_04.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_1_01.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_2.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_2_01.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_2_02.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_3.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_4.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_5.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_5_01.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_6.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_6_01.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_6_02.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_6_03.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_7.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_8.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_8_01.html
+- reports/20260922/mc-versions/v_Alpha_v1_0_9.html
+- reports/20260922/mc-versions/v_Alpha_v1_1_0.html
+- reports/20260922/mc-versions/v_Alpha_v1_1_1.html
+- reports/20260922/mc-versions/v_Alpha_v1_1_2.html
+- reports/20260922/mc-versions/v_Alpha_v1_1_2_01.html
+- reports/20260922/mc-versions/v_Alpha_v1_2_0.html
+- reports/20260922/mc-versions/v_Alpha_v1_2_0_01.html
+- reports/20260922/mc-versions/v_Alpha_v1_2_0_02.html
+- reports/20260922/mc-versions/v_Alpha_v1_2_1.html
+- reports/20260922/mc-versions/v_Alpha_v1_2_1_01.html
+- reports/20260922/mc-versions/v_Alpha_v1_2_2.html
+- reports/20260922/mc-versions/v_Alpha_v1_2_3.html
+- reports/20260922/mc-versions/v_Alpha_v1_2_3_01.html
+- reports/20260922/mc-versions/v_Alpha_v1_2_3_02.html
+- reports/20260922/mc-versions/v_Alpha_v1_2_3_04.html
+- reports/20260922/mc-versions/v_Alpha_v1_2_3_05.html
+- reports/20260922/mc-versions/v_Alpha_v1_2_4_01.html
+- reports/20260922/mc-versions/v_Alpha_v1_2_5.html
+- reports/20260922/mc-versions/v_Alpha_v1_2_6.html
+- reports/20260922/mc-versions/v_Beta_1_0.html
+- reports/20260922/mc-versions/v_Beta_1_0_01.html
+- reports/20260922/mc-versions/v_Beta_1_0_2.html
+- reports/20260922/mc-versions/v_Beta_1_1.html
+- reports/20260922/mc-versions/v_Beta_1_1_01.html
+- reports/20260922/mc-versions/v_Beta_1_1_02.html
+- reports/20260922/mc-versions/v_Beta_1_2.html
+- reports/20260922/mc-versions/v_Beta_1_2_01.html
+- reports/20260922/mc-versions/v_Beta_1_2_02.html
+- reports/20260922/mc-versions/v_Beta_1_3.html
+- reports/20260922/mc-versions/v_Beta_1_3_01.html
+- reports/20260922/mc-versions/v_Beta_1_4.html
+- reports/20260922/mc-versions/v_Beta_1_4_01.html
+- reports/20260922/mc-versions/v_Beta_1_5.html
+- reports/20260922/mc-versions/v_Beta_1_5_01.html
+- reports/20260922/mc-versions/v_Beta_1_5_02.html
+- reports/20260922/mc-versions/v_Beta_1_6.html
+- reports/20260922/mc-versions/v_Beta_1_6_1.html
+- reports/20260922/mc-versions/v_Beta_1_6_2.html
+- reports/20260922/mc-versions/v_Beta_1_6_3.html
+- reports/20260922/mc-versions/v_Beta_1_6_4.html
+- reports/20260922/mc-versions/v_Beta_1_6_5.html
+- reports/20260922/mc-versions/v_Beta_1_6_6.html
+- reports/20260922/mc-versions/v_Beta_1_7.html
+- reports/20260922/mc-versions/v_Beta_1_7_01.html
+- reports/20260922/mc-versions/v_Beta_1_7_2.html
+- reports/20260922/mc-versions/v_Beta_1_7_3.html
+- reports/20260922/mc-versions/v_Beta_1_8.html
+- reports/20260922/mc-versions/v_Beta_1_8_1.html
+- reports/20260922/mc-versions/v_Indev_0_31_200912230040.html
+- reports/20260922/mc-versions/v_Indev_0_31_200912231457.html
+- reports/20260922/mc-versions/v_Indev_0_31_200912231459.html
+- reports/20260922/mc-versions/v_Indev_0_31_200912311856.html
+- reports/20260922/mc-versions/v_Indev_0_31_200912312004.html
+- reports/20260922/mc-versions/v_Indev_0_31_200912312013.html
+- reports/20260922/mc-versions/v_Indev_0_31_200912312033.html
+- reports/20260922/mc-versions/v_Indev_0_31_200912312147.html
+- reports/20260922/mc-versions/v_Indev_0_31_200912312255.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001042154.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001042258.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001061655.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001062158.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001062220.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001071851.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001071947.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001072010.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001091939.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001092000.html
+- reports/20260922/mc-versions/v_Indev_0_31_20100110.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001112207.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001112210.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001120826.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001121949.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001132015.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001132015创造模式.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001132244.html
+- reports/20260922/mc-versions/v_Indev_0_31_20100114.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001221708.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001222251.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001242119.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001242134.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001242310.html
+- reports/20260922/mc-versions/v_Indev_0_31_20100125.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001282203.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001282304.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001291447.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001291452.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001292129.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001292134.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001292138.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001292158.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001292209.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001292333.html
+- reports/20260922/mc-versions/v_Indev_0_31_20100130.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001312157.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001312241.html
+- reports/20260922/mc-versions/v_Indev_0_31_201001312244.html
+- reports/20260922/mc-versions/v_Indev_0_31_201002010025.html
+- reports/20260922/mc-versions/v_Indev_0_31_201002010038.html
+- reports/20260922/mc-versions/v_Indev_0_31_201002012227.html
+- reports/20260922/mc-versions/v_Indev_0_31_201002022157.html
+- reports/20260922/mc-versions/v_Indev_0_31_201002022311.html
+- reports/20260922/mc-versions/v_Indev_0_31_201002022330.html
+- reports/20260922/mc-versions/v_Indev_0_31_201002041541.html
+- reports/20260922/mc-versions/v_Indev_0_31_201002042027.html
+- reports/20260922/mc-versions/v_Indev_0_31_201002042153.html
+- reports/20260922/mc-versions/v_Indev_0_31_201002051558.html
+- reports/20260922/mc-versions/v_Indev_0_31_201002052241.html
+- reports/20260922/mc-versions/v_Indev_0_31_201002061437.html
+- reports/20260922/mc-versions/v_Indev_201002062034.html
+- reports/20260922/mc-versions/v_Indev_201002062103.html
+- reports/20260922/mc-versions/v_Indev_201002071057.html
+- reports/20260922/mc-versions/v_Indev_201002071101.html
+- reports/20260922/mc-versions/v_Indev_201002071647.html
+- reports/20260922/mc-versions/v_Indev_201002071703.html
+- reports/20260922/mc-versions/v_Indev_201002112327.html
+- reports/20260922/mc-versions/v_Indev_201002112333.html
+- reports/20260922/mc-versions/v_Indev_201002112340.html
+- reports/20260922/mc-versions/v_Indev_201002121210.html
+- reports/20260922/mc-versions/v_Indev_201002121622.html
+- reports/20260922/mc-versions/v_Indev_20100213.html
+- reports/20260922/mc-versions/v_Indev_20100214.html
+- reports/20260922/mc-versions/v_Indev_201002180011.html
+- reports/20260922/mc-versions/v_Indev_201002180016.html
+- reports/20260922/mc-versions/v_Indev_20100219.html
+- reports/20260922/mc-versions/v_Indev_20100223.html
+- reports/20260922/mc-versions/v_Infdev_201002271414.html
+- reports/20260922/mc-versions/v_Infdev_201002271433.html
+- reports/20260922/mc-versions/v_Infdev_20100313.html
+- reports/20260922/mc-versions/v_Infdev_20100316.html
+- reports/20260922/mc-versions/v_Infdev_20100320.html
+- reports/20260922/mc-versions/v_Infdev_20100321.html
+- reports/20260922/mc-versions/v_Infdev_201003251545.html
+- reports/20260922/mc-versions/v_Infdev_201003251640.html
+- reports/20260922/mc-versions/v_Infdev_20100327.html
+- reports/20260922/mc-versions/v_Infdev_201003301203.html
+- reports/20260922/mc-versions/v_Infdev_201003301611.html
+- reports/20260922/mc-versions/v_Infdev_201004131951.html
+- reports/20260922/mc-versions/v_Infdev_201004131953.html
+- reports/20260922/mc-versions/v_Infdev_20100414.html
+- reports/20260922/mc-versions/v_Infdev_20100415.html
+- reports/20260922/mc-versions/v_Infdev_20100420.html
+- reports/20260922/mc-versions/v_Infdev_20100607.html
+- reports/20260922/mc-versions/v_Infdev_20100608.html
+- reports/20260922/mc-versions/v_Infdev_20100611.html
+- reports/20260922/mc-versions/v_Infdev_20100615.html
+- reports/20260922/mc-versions/v_Infdev_201006161808.html
+- reports/20260922/mc-versions/v_Infdev_201006162210.html
+- reports/20260922/mc-versions/v_Infdev_201006171205.html
+- reports/20260922/mc-versions/v_Infdev_201006171531.html
+- reports/20260922/mc-versions/v_Infdev_20100618.html
+- reports/20260922/mc-versions/v_Infdev_20100624.html
+- reports/20260922/mc-versions/v_Infdev_201006250922.html
+- reports/20260922/mc-versions/v_Infdev_201006251917.html
+- reports/20260922/mc-versions/v_Infdev_20100627.html
+- reports/20260922/mc-versions/v_Infdev_20100629.html
+- reports/20260922/mc-versions/v_Infdev_201006301340.html
+- reports/20260922/mc-versions/v_Infdev_201006301835.html
+- reports/20260922/mc-versions/v_mc161607.html
+- reports/20260922/mc-versions/v_mc161616.html
+- reports/20260922/mc-versions/v_mc161625.html
+- reports/20260922/mc-versions/v_mc161648.html
+- reports/20260922/mc-versions/v_rd131655.html
+- reports/20260922/mc-versions/v_rd132211.html
+- reports/20260922/mc-versions/v_rd132328.html
+- reports/20260922/mc-versions/v_rd160052.html
+- reports/20260922/mc-versions/v_rd161348.html
+- reports/20260922/mc-versions/v_rd20090515.html

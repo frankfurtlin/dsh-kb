@@ -28,6 +28,24 @@ const PYTHON = process.env.DSH_KB_PYTHON || '/usr/bin/python3.11'
 const require = createRequire('/root/workspace/hermes-site/tools/node_modules/')
 const { chromium } = require('playwright')
 
+// Playwright 与浏览器 revision 可能失配（hermes-site/tools 会升级）：优先用环境变量，
+// 否则在默认缺失时回退到本机已有的 headless shell。
+const FALLBACK_CHROME =
+  '/root/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell'
+
+async function launchBrowser() {
+  const options = { headless: true, args: ['--no-sandbox'] }
+  if (process.env.KB_CHROMIUM) return chromium.launch({ ...options, executablePath: process.env.KB_CHROMIUM })
+  try {
+    return await chromium.launch(options)
+  } catch (error) {
+    if (!String(error).includes('Executable doesn\'t exist')) throw error
+    console.warn('[playwright] 默认浏览器缺失，回退到 chromium 1243：' + FALLBACK_CHROME)
+    return chromium.launch({ ...options, executablePath: FALLBACK_CHROME })
+  }
+}
+
+
 function arg(name, fallback) {
   const index = process.argv.indexOf(`--${name}`)
   if (index === -1) return fallback
@@ -281,7 +299,7 @@ async function main() {
     const unsetPub = await api('/api/kb/public', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: pubPath, public: false }) })
     check('P6 取消公开成功', unsetPub.status === 200 && unsetPub.json?.public === false)
 
-    browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] })
+    browser = await launchBrowser()
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
     const page = await context.newPage()
     const consoleErrors = []

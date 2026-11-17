@@ -98,6 +98,16 @@ def embed_query(text: str) -> list[float]:
     return vectors[0] if vectors else []
 
 
+def wiki_document_text(page: dict) -> str:
+    """wiki 页送入模型的文本：标题 + 实体类型 + 页正文（markdown 去掉标记后截断）。"""
+    body = str(page.get("body_md") or "")
+    body = body.split("---", 2)[-1] if body.startswith("---") else body
+    body = body.replace("#", " ").replace("[[", " ").replace("]]", " ")
+    return "\n".join(part for part in [page.get("title") or "",
+                                       page.get("entity_type") or "",
+                                       body[: config.EMBED_BODY_LIMIT]] if part)
+
+
 def document_text(item: dict) -> str:
     """送入模型的文档文本：标题 + 摘要 + 标签 + 正文前若干字。"""
     summary = item.get("summary_ai") or item.get("summary") or ""

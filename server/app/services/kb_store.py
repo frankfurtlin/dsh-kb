@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import re
@@ -86,6 +87,52 @@ CREATE TABLE IF NOT EXISTS report_events (
     created_at TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_report_events_path ON report_events(path, id);
+
+-- P10：知识图谱 + LLM Wiki。wiki 页是 reports 与 AI 实体的派生产物，
+-- 这里只存索引与引用关系；正文 markdown 同时写到 WIKI_DIR/pages/<slug>.md。
+CREATE TABLE IF NOT EXISTS wiki_page (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug TEXT NOT NULL UNIQUE,
+    kind TEXT NOT NULL DEFAULT 'entity',       -- entity | topic | query
+    title TEXT NOT NULL,
+    entity_type TEXT NOT NULL DEFAULT '',
+    body_md TEXT NOT NULL DEFAULT '',
+    source_hash TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT 'live',        -- live | stale | archived
+    report_count INTEGER NOT NULL DEFAULT 0,
+    generated_by TEXT NOT NULL DEFAULT 'deterministic',
+    model TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_wiki_page_kind ON wiki_page(kind, state);
+
+-- 页内出链：target_slug 指向另一张 wiki 页（[[slug|label]]）。
+CREATE TABLE IF NOT EXISTS wiki_link (
+    page_id INTEGER NOT NULL,
+    target_slug TEXT NOT NULL,
+    PRIMARY KEY (page_id, target_slug)
+);
+CREATE INDEX IF NOT EXISTS idx_wiki_link_target ON wiki_link(target_slug);
+
+-- 页的来源报告（反向引用）：删除/更新报告时靠它定位要重建的页。
+CREATE TABLE IF NOT EXISTS wiki_source (
+    page_id INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    contribution TEXT NOT NULL DEFAULT 'entity',
+    PRIMARY KEY (page_id, path)
+);
+CREATE INDEX IF NOT EXISTS idx_wiki_source_path ON wiki_source(path);
+
+-- 增量编译台账：hash 命中即跳过，失败可重试。
+CREATE TABLE IF NOT EXISTS compile_job (
+    report_path TEXT NOT NULL,
+    page_slug TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',    -- pending | done | failed
+    attempts INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (report_path, page_slug)
+);
 """
 
 # 旧库升级：CREATE TABLE IF NOT EXISTS 不会补列，这里逐列 ALTER。
@@ -121,6 +168,11 @@ CLASSIFY_COLUMNS = {
     "classify_error": "TEXT NOT NULL DEFAULT ''",
 }
 
+# P10：报告内容指纹（sha1），供 wiki 增量编译与「过期页」检测。
+WIKI_COLUMNS = {
+    "content_hash": "TEXT NOT NULL DEFAULT ''",
+}
+
 AI_COLUMNS = {
     "summary_ai": "TEXT NOT NULL DEFAULT ''",
     "key_points": "TEXT NOT NULL DEFAULT '[]'",
@@ -129,6 +181,13 @@ AI_COLUMNS = {
     "ai_version": "INTEGER NOT NULL DEFAULT 0",
     "ai_at": "TEXT NOT NULL DEFAULT ''",
     "ai_error": "TEXT NOT NULL DEFAULT ''",
+}
+
+# P10：wiki 页向量（step 3：让 wiki 页进入同一套混合检索）。
+WIKI_EMBED_COLUMNS = {
+    "embedding": "BLOB",
+    "embed_model": "TEXT NOT NULL DEFAULT ''",
+    "embed_at": "TEXT NOT NULL DEFAULT ''",
 }
 
 _write_lock = threading.Lock()
@@ -148,6 +207,7 @@ def _connect() -> sqlite3.Connection:
     conn.execute("PRAGMA temp_store=MEMORY")
     conn.executescript(_SCHEMA)
     _ensure_columns(conn)
+    _ensure_wiki_columns(conn)
     _backfill_meta(conn)
     return conn
 
@@ -161,9 +221,19 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         **PUBLIC_COLUMNS,
         **META_COLUMNS,
         **CLASSIFY_COLUMNS,
+        **WIKI_COLUMNS,
     }.items():
         if column not in existing:
             conn.execute(f"ALTER TABLE reports ADD COLUMN {column} {definition}")
+    conn.commit()
+
+
+def _ensure_wiki_columns(conn: sqlite3.Connection) -> None:
+    """给旧库的 wiki_page 表补齐向量列（幂等）。"""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(wiki_page)")}
+    for column, definition in WIKI_EMBED_COLUMNS.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE wiki_page ADD COLUMN {column} {definition}")
     conn.commit()
 
 
@@ -270,6 +340,19 @@ def _backfill_meta(conn: sqlite3.Connection) -> None:
 # ---------- 正文抽取 ----------
 
 
+def _content_hash(path: Path) -> str:
+    """报告文件内容指纹（sha1），供 wiki 增量编译判断「这篇报告变没变」。"""
+    try:
+        return hashlib.sha1(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+def connect() -> sqlite3.Connection:
+    """公开的连接入口：其他模块（kb_wiki）复用同一套 schema/迁移。"""
+    return _connect()
+
+
 def _extract_text(path: Path) -> tuple[str, str]:
     """返回 (summary, body)：summary 优先取第一个有内容的 <p>，body 为全文纯文本。"""
     try:
@@ -316,7 +399,8 @@ def sync(force: bool = False) -> dict:
             existing = {
                 row["path"]: row
                 for row in conn.execute(
-                    "SELECT path, size, mtime, title, category, series, category_rule, series_rule, date"
+                    "SELECT path, size, mtime, title, category, series, category_rule, series_rule, date,"
+                    " content_hash"
                     " FROM reports"
                 )
             }
@@ -333,21 +417,30 @@ def sync(force: bool = False) -> dict:
                 meta_changed = row is not None and (
                     (row["title"], row["date"]) != (item["title"], item["date"]) or rules_changed
                 )
+                if row is not None and not content_changed and not (row["content_hash"] or ""):
+                    # 旧库升级：补算内容指纹（不触发 AI 失效，只补 hash）。
+                    conn.execute(
+                        "UPDATE reports SET content_hash=? WHERE path=?",
+                        (_content_hash(kb_index.REPORTS_DIR / path), path),
+                    )
                 if not content_changed and not meta_changed:
                     continue
 
                 if content_changed:
-                    summary, body = _extract_text(kb_index.REPORTS_DIR / path)
+                    report_file = kb_index.REPORTS_DIR / path
+                    summary, body = _extract_text(report_file)
+                    chash = _content_hash(report_file)
                     conn.execute(
                         """
                         INSERT INTO reports
                             (path, title, category, series, category_rule, series_rule,
-                             date, size, mtime, summary, body, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             date, size, mtime, summary, body, content_hash, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(path) DO UPDATE SET
                             title=excluded.title,
                             date=excluded.date, size=excluded.size, mtime=excluded.mtime,
                             summary=excluded.summary, body=excluded.body,
+                            content_hash=excluded.content_hash,
                             category_rule=excluded.category_rule,
                             series_rule=excluded.series_rule,
                             -- 正文变化 → AI 分类失效，生效值回落规则值。
@@ -371,6 +464,7 @@ def sync(force: bool = False) -> dict:
                             stat_key[1],
                             summary,
                             body,
+                            chash,
                             now,
                             now,
                         ),
@@ -1295,6 +1389,7 @@ def hybrid_search(
     limit: int = 20,
     semantic_weight: float = 0.62,
     lexical_weight: float = 0.38,
+    include_wiki: bool = True,
 ) -> tuple[list[dict], int]:
     """语义 + 词法混合检索；返回 (items, total)。
 
@@ -1336,11 +1431,31 @@ def hybrid_search(
         if score <= 0.05:
             continue
         scored.append((score, similarity, match, row))
-    scored.sort(key=lambda entry: (-entry[0], entry[3]["date"] or "", entry[3]["title"] or ""))
+    # wiki 页作为「单实体文档」参与同一排序；有分类/系列/日期筛选时先不混入，
+    # 避免把浏览视图（按分类翻报告）变成混合列表。
+    filtered = bool(category or series or date_from or date_to or view != "all")
+    if include_wiki and not filtered:
+        scored.extend(
+            _wiki_candidates(
+                keyword,
+                query_vector,
+                model=model,
+                semantic_weight=semantic_weight,
+                lexical_weight=lexical_weight,
+            )
+        )
+    scored.sort(key=lambda entry: (-entry[0], (entry[3]["date"] if not isinstance(entry[3], dict) else "") or "",
+                                   entry[3]["title"] or ""))
     total = len(scored)
     window = scored[max(0, int(offset)) : max(0, int(offset)) + int(limit)]
     items = []
     for score, similarity, match, row in window:
+        if isinstance(row, dict):  # wiki 页候选已经是成品 item
+            item = dict(row)
+            item["score"] = round(float(score), 4)
+            item["semantic_score"] = round(float(similarity), 4)
+            items.append(item)
+            continue
         item = _row_to_item(row)
         snippet = _snippet_for(row, keyword) if match == "body" else {"snippet": item["summary_ai"] or item["summary"], "match": match}
         item.update(snippet)
@@ -1349,3 +1464,131 @@ def hybrid_search(
         item["match"] = match if match != "semantic" else "semantic"
         items.append(item)
     return items, total
+
+# ---------- P10 step 3：wiki 页向量与混合检索候选 ----------
+
+
+def wiki_embed_stats(model: str) -> dict:
+    conn = _connect()
+    try:
+        total = conn.execute("SELECT COUNT(*) FROM wiki_page").fetchone()[0]
+        embedded = conn.execute(
+            "SELECT COUNT(*) FROM wiki_page WHERE embedding IS NOT NULL AND embed_model = ?",
+            (model,),
+        ).fetchone()[0]
+        return {"total": total, "embedded": embedded, "pending": max(0, total - embedded)}
+    finally:
+        conn.close()
+
+
+def next_pending_wiki_embedding(limit: int, *, model: str) -> list[dict]:
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT slug, title, entity_type, body_md FROM wiki_page"
+            " WHERE embed_model != ? OR embedding IS NULL"
+            " ORDER BY report_count DESC, slug ASC LIMIT ?",
+            (model, max(1, int(limit))),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def set_wiki_embedding(slug: str, vector, model: str) -> None:
+    payload = np.asarray(vector, dtype=np.float32).tobytes()
+    conn = _connect()
+    try:
+        conn.execute(
+            "UPDATE wiki_page SET embedding = ?, embed_model = ?, embed_at = ? WHERE slug = ?",
+            (payload, model, _now(), slug),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def wiki_vectors(*, model: str):
+    """取全部 wiki 页向量（按行归一化），返回 (rows, matrix)。"""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT slug, title, entity_type, body_md, report_count, embedding"
+            " FROM wiki_page WHERE embedding IS NOT NULL AND embed_model = ?",
+            (model,),
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return [], np.zeros((0, 0), dtype=np.float32)
+    matrix = np.vstack([np.frombuffer(row["embedding"], dtype=np.float32) for row in rows])
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    return rows, (matrix / norms).astype(np.float32)
+
+
+def _wiki_plain_text(body_md: str) -> str:
+    """把 wiki markdown 压成纯文本摘要（去 front matter/标题标记/wiki 链接语法）。"""
+    text = str(body_md or "")
+    lines = text.splitlines()
+    if lines and lines[0].strip() == "---":
+        for index in range(1, len(lines)):
+            if lines[index].strip() == "---":
+                lines = lines[index + 1:]
+                break
+    text = "\n".join(lines)
+    text = re.sub(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]", lambda m: (m.group(2) or m.group(1)), text)
+    text = re.sub(r"(?m)^#{1,6}\s*", "", text)
+    text = text.replace("**", "").replace("`", "")
+    return " ".join(text.split())
+
+
+def _wiki_candidates(keyword: str, query_vector, *, model: str,
+                     semantic_weight: float, lexical_weight: float) -> list[tuple]:
+    """把 wiki 页当成「一篇只讲一个实体的文档」参与同一套混合打分。"""
+    rows, matrix = wiki_vectors(model=model)
+    if not rows:
+        return []
+    vector = np.asarray(query_vector, dtype=np.float32)
+    norm = float(np.linalg.norm(vector)) or 1.0
+    cosine = matrix @ (vector / norm)
+    lowered = (keyword or "").lower()
+    out = []
+    for index, row in enumerate(rows):
+        title = (row["title"] or "").lower()
+        body = (row["body_md"] or "").lower()
+        lexical, match = 0.0, "semantic"
+        if lowered:
+            if lowered in title:
+                lexical, match = 1.0, "title"
+            elif lowered in body:
+                lexical, match = 0.55, "body"
+        similarity = max(0.0, float(cosine[index]))
+        if lowered and lexical == 0.0 and similarity < 0.28:
+            continue
+        if not lowered and similarity < 0.15:
+            continue
+        score = semantic_weight * similarity + lexical_weight * lexical
+        if score <= 0.05:
+            continue
+        summary = _wiki_plain_text(row["body_md"])[:280]
+        item = {
+            "kind": "wiki",
+            "slug": row["slug"],
+            "path": f"wiki:{row['slug']}",
+            "url": f"wiki/{row['slug']}",
+            "title": row["title"],
+            "entity_type": row["entity_type"] or "",
+            "category": "",
+            "series": row["entity_type"] or "",
+            "date": "",
+            "summary": summary,
+            "summary_ai": "",
+            "report_count": row["report_count"] or 0,
+            "match": match,
+            "snippet": summary[:160],
+            "score": round(float(score), 4),
+            "semantic_score": round(float(similarity), 4),
+        }
+        out.append((score, similarity, match, item))
+    return out
