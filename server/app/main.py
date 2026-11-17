@@ -32,10 +32,11 @@ from app import config
 from app.api.routes import kb as kb_routes
 from app.api.routes import pages as page_routes
 from app.api.routes import public_site as public_routes
+from app.api.routes import graph as graph_routes
 from app.api.routes import wiki as wiki_routes
 from app.api.routes import reports as report_routes
 from app.config import ROUTE_PREFIX, STATIC_DIR
-from app.services import kb_ai, kb_classify, kb_embed, kb_enrich, kb_search, kb_store, kb_wiki
+from app.services import kb_ai, kb_classify, kb_embed, kb_enrich, kb_graph, kb_search, kb_store
 
 logger = logging.getLogger("dsh-kb")
 
@@ -78,17 +79,17 @@ def _embed_worker(stop_event: threading.Event) -> None:
     while not stop_event.is_set():
         try:
             stats = kb_store.embed_stats(model)
-            wiki = kb_store.wiki_embed_stats(model)
-            if stats["pending"] <= 0 and wiki["pending"] <= 0:
+            nodes = kb_store.node_embed_stats(model)
+            if stats["pending"] <= 0 and nodes["pending"] <= 0:
                 logger.info(
-                    "向量索引已完整：报告 %s/%s，wiki %s/%s",
-                    stats["embedded"], stats["total"], wiki["embedded"], wiki["total"],
+                    "向量索引已完整：报告 %s/%s，图谱节点 %s/%s",
+                    stats["embedded"], stats["total"], nodes["embedded"], nodes["total"],
                 )
                 return
             result = (
                 kb_search.build_pending(config.EMBED_BATCH)
                 if stats["pending"] > 0
-                else kb_search.build_pending_wiki(config.EMBED_BATCH)
+                else kb_search.build_pending_nodes(config.EMBED_BATCH)
             )
             if not result.get("ok") or not result.get("embedded"):
                 logger.warning("向量补齐未产生进展：%s", result)
@@ -103,9 +104,9 @@ def _embed_worker(stop_event: threading.Event) -> None:
 async def lifespan(_app: FastAPI):
     # 启动时增量同步一次索引（首次会读全部报告，之后只读变化的文件）。
     kb_store.sync()
-    # P10：按内容 hash 增量重编 wiki（hash 命中的页直接跳过写盘）。
+    # P10/P12：按内容 hash 增量重编图谱节点与共现边（hash 命中的节点直接跳过写盘）。
     try:
-        summary = kb_wiki.build()
+        summary = kb_graph.build()
         logger.info("Wiki 编译完成：%s 页（写 %s / 跳过 %s）", summary.get("pages"),
                     summary.get("written"), summary.get("skipped"))
     except Exception:  # 编译失败不影响检索与浏览
@@ -216,6 +217,7 @@ for prefix in ("", ROUTE_PREFIX):
     app.include_router(page_routes.router, prefix=prefix)
     app.include_router(kb_routes.router, prefix=prefix)
     app.include_router(report_routes.router, prefix=prefix)
+    app.include_router(graph_routes.router, prefix=prefix)
     app.include_router(wiki_routes.router, prefix=prefix)
 
 # 公开报告站点：只注册一次（/kb-public/... 绝对路径），不随 ROUTE_PREFIX 复制，

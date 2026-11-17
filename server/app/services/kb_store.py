@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS report_events (
 CREATE INDEX IF NOT EXISTS idx_report_events_path ON report_events(path, id);
 
 -- P10：知识图谱 + LLM Wiki。wiki 页是 reports 与 AI 实体的派生产物，
--- 这里只存索引与引用关系；正文 markdown 同时写到 WIKI_DIR/pages/<slug>.md。
+-- 这里只存索引与引用关系；正文 markdown 同时写到 GRAPH_DIR/pages/<slug>.md。
 CREATE TABLE IF NOT EXISTS wiki_page (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     slug TEXT NOT NULL UNIQUE,
@@ -181,7 +181,7 @@ CLASSIFY_COLUMNS = {
     "classify_error": "TEXT NOT NULL DEFAULT ''",
 }
 
-# P10：报告内容指纹（sha1），供 wiki 增量编译与「过期页」检测。
+# P10/P12：报告内容指纹（sha1），供图谱节点增量编译与「过期节点」检测。
 WIKI_COLUMNS = {
     "content_hash": "TEXT NOT NULL DEFAULT ''",
 }
@@ -354,7 +354,7 @@ def _backfill_meta(conn: sqlite3.Connection) -> None:
 
 
 def _content_hash(path: Path) -> str:
-    """报告文件内容指纹（sha1），供 wiki 增量编译判断「这篇报告变没变」。"""
+    """报告文件内容指纹（sha1），供节点增量编译判断「这篇报告变没变」。"""
     try:
         return hashlib.sha1(path.read_bytes()).hexdigest()
     except OSError:
@@ -1402,7 +1402,7 @@ def hybrid_search(
     limit: int = 20,
     semantic_weight: float = 0.62,
     lexical_weight: float = 0.38,
-    include_wiki: bool = True,
+    include_nodes: bool = True,
     ppr_weight: float = 0.0,
 ) -> tuple[list[dict], int]:
     """语义 + 词法混合检索；返回 (items, total)。
@@ -1466,9 +1466,9 @@ def hybrid_search(
     # wiki 页作为「单实体文档」参与同一排序；有分类/系列/日期筛选时先不混入，
     # 避免把浏览视图（按分类翻报告）变成混合列表。
     filtered = bool(category or series or date_from or date_to or view != "all")
-    if include_wiki and not filtered:
+    if include_nodes and not filtered:
         scored.extend(
-            _wiki_candidates(
+            _node_candidates(
                 keyword,
                 query_vector,
                 model=model,
@@ -1500,7 +1500,7 @@ def hybrid_search(
 # ---------- P10 step 3：wiki 页向量与混合检索候选 ----------
 
 
-def wiki_embed_stats(model: str) -> dict:
+def node_embed_stats(model: str) -> dict:
     conn = _connect()
     try:
         total = conn.execute("SELECT COUNT(*) FROM wiki_page").fetchone()[0]
@@ -1513,7 +1513,7 @@ def wiki_embed_stats(model: str) -> dict:
         conn.close()
 
 
-def next_pending_wiki_embedding(limit: int, *, model: str) -> list[dict]:
+def next_pending_node_embedding(limit: int, *, model: str) -> list[dict]:
     conn = _connect()
     try:
         rows = conn.execute(
@@ -1527,7 +1527,7 @@ def next_pending_wiki_embedding(limit: int, *, model: str) -> list[dict]:
         conn.close()
 
 
-def set_wiki_embedding(slug: str, vector, model: str) -> None:
+def set_node_embedding(slug: str, vector, model: str) -> None:
     payload = np.asarray(vector, dtype=np.float32).tobytes()
     conn = _connect()
     try:
@@ -1540,7 +1540,7 @@ def set_wiki_embedding(slug: str, vector, model: str) -> None:
         conn.close()
 
 
-def wiki_vectors(*, model: str):
+def node_vectors(*, model: str):
     """取全部 wiki 页向量（按行归一化），返回 (rows, matrix)。"""
     conn = _connect()
     try:
@@ -1575,10 +1575,10 @@ def _wiki_plain_text(body_md: str) -> str:
     return " ".join(text.split())
 
 
-def _wiki_candidates(keyword: str, query_vector, *, model: str,
+def _node_candidates(keyword: str, query_vector, *, model: str,
                      semantic_weight: float, lexical_weight: float) -> list[tuple]:
     """把 wiki 页当成「一篇只讲一个实体的文档」参与同一套混合打分。"""
-    rows, matrix = wiki_vectors(model=model)
+    rows, matrix = node_vectors(model=model)
     if not rows:
         return []
     vector = np.asarray(query_vector, dtype=np.float32)
@@ -1605,9 +1605,9 @@ def _wiki_candidates(keyword: str, query_vector, *, model: str,
             continue
         summary = _wiki_plain_text(row["body_md"])[:280]
         item = {
-            "kind": "wiki",
+            "kind": "node",
             "slug": row["slug"],
-            "path": f"wiki:{row['slug']}",
+            "path": f"node:{row['slug']}",
             "url": f"wiki/{row['slug']}",
             "title": row["title"],
             "entity_type": row["entity_type"] or "",
@@ -1640,7 +1640,7 @@ def invalidate_graph_cache() -> None:
 def replace_entity_edges(edges, *, conn: sqlite3.Connection | None = None) -> int:
     """整表替换共现边。edges 为 (slug_a, slug_b, weight) 迭代；自动做无向规范化。
 
-    传入 conn 时复用调用方事务（wiki 编译期间正持有同一连接的写事务）。
+    传入 conn 时复用调用方事务（编译期间正持有同一连接的写事务）。
     """
     rows = []
     for a, b, weight in edges:

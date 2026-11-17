@@ -25,7 +25,7 @@ SQLite 索引库（摘要/正文缓存 + 已读/收藏 + 公开标记 + AI sidec
 |---|---|---|---|
 | G1 | 自动分类 | 报告进来就归到合理的分类/系列，不需要人工建文件夹、改名 | **AI 主导已上线（v0.4）**：规则只做冷启动与兜底 |
 | G2 | 自动标签 | 每篇有稳定、人可读、可筛选、可聚合的主题标签；同义标签自动合并 | AI 已生成 tags/entities 并展示，但还不是导航维度 |
-| G3 | 关联 | 报告之间、主题之间有可解释的关系（相关报告 / 知识图谱 / LLM wiki 主题页） | 仅标签/实体软关联，无图谱与主题页 |
+| G3 | 关联 | 报告之间、主题之间有可解释的关系（相关报告 / 知识图谱 / LLM wiki 主题页） | 图谱节点 + 共现边 + PPR 已上线（P11）；LLM Wiki 文章下一阶段 |
 | G4 | 准确检索 | 关键词、语义、问答三条路都能快速命中，且质量可度量 | 混合检索已上线，但还没有评测集 |
 
 **术语**（README 其余部分沿用）：
@@ -34,7 +34,7 @@ SQLite 索引库（摘要/正文缓存 + 已读/收藏 + 公开标记 + AI sidec
 - **分类**：一级主题（当前 8 类）；**系列**：分类下的项目/版本线（当前 22 组）。
 - **标签**：AI 从正文抽出的自由词（如 `#A股收盘`、`#半导体`），跨分类可复用。
 - **实体**：结构化名词（公司、产品、人物、指标），带类型，是未来图谱的节点。
-- **主题页**（规划中）：把同一标签/实体下的所有报告聚成一篇可读的 LLM wiki 页，报告之间用双链引用。
+- **主题节点**（P11 已上线）：把同一标签下的报告聚成一个主题节点图节点；**LLM Wiki 文章**（模型撰写、带引用，P12 起独立成层）下一阶段接入。
 
 ### 演进路线（按依赖顺序）
 
@@ -45,12 +45,13 @@ SQLite 索引库（摘要/正文缓存 + 已读/收藏 + 公开标记 + AI sidec
 - **R2 标签一等公民**（G2）：标签规范化（单复数、别名、中英同义合并）、标签页（点标签看
   该标签下所有报告）、标签作为筛选维度与检索加权；验收：标签覆盖率 ≥ 95%，只出现一次的
   碎片标签占比 ≤ 30%。
-- **R3 关系与图谱**（G3）：以「报告 – 标签 – 实体」建边，报告详情先出「相关报告」
-  （共享标签/实体 + 向量近邻），再考虑可视化成图谱；验收：相关报告 top3 人工相关率 ≥ 70%。
-- **R4 LLM Wiki 主题页**（G3）：按高频标签/实体自动生成主题页（综述 + 时间线 + 引用报告），
+- **R3 关系与图谱**（G3，已完成 v0.5/v0.6）：实体共现边 + 主题节点 + 邻域/相关报告 API +
+  PPR 第三路召回；验收有 16 条 query 的 Recall@5 / MRR 评测。
+- **R3+ 图谱可视化**（G3，待做）：把节点/边渲染成可交互画布（当前是索引页 + 节点页）。
+- **R4 LLM Wiki 文章**（G3，P12 起与图谱拆开）：按高频主题/实体生成模型撰写的文章（综述 + 时间线 + [n] 引用），
   支持增量更新；验收：每个高频标签都有可读主题页。
-- **R5 检索质量回归**（G4）：建 50–100 条「query → 期望报告」评测集，纳入 pytest 回归，
-  记录 Recall@5 / MRR；验收：任何改动不得让指标下降。
+- **R5 检索质量回归**（G4，部分完成）：已建 16 条「query → 期望报告」评测集
+  （`verification/eval/queries.json`）与 `cli_eval` 指标输出；扩充到 50–100 条并纳入 CI 回归。
 
 ### 设计原则
 
@@ -133,36 +134,44 @@ SQLite kb.sqlite ── ② 正文摘要 + 全文（≤2 万字）
   - 公开页内链统一改写成 `/kb-public/...`，并带 `X-Robots-Tag: noindex, nofollow`。
   - 外链入口在 DSH 之外（hermes 站点 Caddy），因为 DSH 在路由分发前有全局匿名闸门。
 
-**知识图谱 / LLM Wiki（P10）**
-- 报告里的 AI 实体（P1 抽取）被聚合成互相链接的 wiki 页：`WIKI_DIR/pages/<slug>.md`，
-  另有 `index.md`（导航）、`log.md`（编译日志）、`SCHEMA.md`（约定），可整目录丢进
-  Obsidian 浏览。侧栏「Wiki 图谱」直接打开（`/kb/wiki/`）。
-- 页表在 SQLite：`wiki_page`（slug/正文/来源 hash/状态）、`wiki_link`（页间出链）、
-  `wiki_source`（反向引用：哪篇报告贡献了这页）——删除/更新报告时靠反向引用精确重建。
-- 编译是**确定性**的（不调模型、零成本）：实体按出现篇数聚页（默认 ≥2 篇才建页），
-  每页含概述、相关报告（按日期）、共现实体、标签、来源；`WIKI_MIN_REPORTS` / 
-  `WIKI_MAX_PAGES` 控制规模。首次全量 474 篇 → 231 页 / 1615 条引用 / 1050 条互链，约 0.2s。
-- 增量：`reports.content_hash`（sha1）+ 页的 `source_hash`，hash 相同即跳过写盘
-  （第二次编译 `written=0`，~35ms）；同步后自动触发（`KB_WIKI_AUTO=1`）。
-- 检索：wiki 页也建向量（本地 fastembed），与报告一起参与 `0.62·余弦 + 0.38·词法`
-  混合排序；`/api/kb/ask` 的引用里 wiki 页标 `Wiki · <实体类型>`。
-- 体检：`GET /api/wiki/lint` 返回孤儿页/断链/过期页/高频无页标签，供每周巡检。
-
-**知识图谱 + 第三路召回（P11）**
-- **共现边**：`entity_edges` 表记录实体页之间的共现关系（同一篇报告里出现过多少次，
-  `weight` 即篇数），编译时整体重建；页级无向图 = wiki 互链（权重 1）+ 共现边（权重
-  `min(weight,5)`），30s 缓存。
-- **主题页**：把标签按覆盖报告数聚成 `topic-*` 页（`KB_WIKI_TOPIC_MIN_REPORTS`，默认 ≥5 篇；
-  与实体页同名/噪声名跳过），页内含跨分类分布、相关报告、主要实体、相关标签；
-  索引页 `/kb/wiki/` 分「实体页」「主题页」两节。当前 474 篇 → **284 页 = 231 实体 + 53 主题 /
+**知识图谱（P10 / P11 / P12）**
+- 报告里的 AI 实体（P1 抽取）被聚合成**节点**：实体节点（`kind=entity`）与主题节点
+  （`kind=topic`，标签覆盖 ≥`KB_GRAPH_TOPIC_MIN_REPORTS` 篇报告）。节点 markdown 写到
+  `GRAPH_DIR/pages/<slug>.md`，另有 `index.md`/`log.md`/`SCHEMA.md`，可整目录丢进 Obsidian；
+  侧栏「**知识图谱**」直接打开（`/kb/graph/`）。
+- 表：`wiki_page`（节点：slug/正文/来源 hash/状态）、`wiki_link`（互链）、`wiki_source`
+  （反向引用：哪篇报告贡献了这节点）、`entity_edges`（共现边）。
+- 编译是**确定性**的（不调模型、零成本）：实体按出现篇数建节点（默认 ≥2 篇），每节点含概述、
+  相关报告（按日期）、共现实体、标签、来源。当前 474 篇 → **284 节点 = 231 实体 + 53 主题 /
   3109 引用 / 1459 互链 / 1120 条共现边**。
-- **PPR 第三路召回**：检索先算语义+词法分，再用 top8 结果的来源页做种子跑
-  Personalized PageRank，把页质量按「该页覆盖报告数」摊薄后加回报告得分
-  （`score + 0.15 × boost`）。权重 `KB_HYBRID_WEIGHT_PPR` 可调，置 0 即关闭；
-  图检索异常只静默降级，不影响主检索。
-- **评测集**：`verification/eval/queries.json` 16 条 query + gold 正则（覆盖行情/个股/板块/
-  版本/精读/影像/技术长文）；`python -m app.cli_eval` 输出每模式 Recall@5、MRR@10 与逐条名次，
-  可存档对比（`verification/eval/baseline.json`）。
+- 增量：`reports.content_hash`（sha1）+ 节点的 `source_hash`，hash 相同即跳过写盘
+  （第二次编译 `written=0`）；同步后自动触发（`KB_GRAPH_AUTO=1`）。
+- 检索：节点也建向量（本地 fastembed），与报告一起参与 `0.62·余弦 + 0.38·词法` 混合排序；
+  `/api/kb/ask` 的引用里节点标 `图谱 · <实体类型>`。
+- 图查询：`/api/graph/neighbors/{slug}` 返回共现邻居与互链，`/api/graph/related/{slug}` 返回
+  该节点直接引用的报告；体检 `GET /api/graph/lint` 检查孤儿节点/断链/过期节点/高频无节点标签。
+
+**知识图谱第三路召回（P11）**
+- **共现边**：`entity_edges` 记录两实体在同一篇报告里的共现次数（`weight` 即篇数），编译时整体
+  重建；节点级无向图 = 互链（权重 1）+ 共现边（权重 `min(weight,5)`），30s 缓存。
+- **主题节点**：把标签按覆盖报告数聚成 `topic-*` 节点，含跨分类分布、相关报告、主要实体、
+  相关标签；索引页 `/kb/graph/` 分「实体节点」「主题节点」两节。
+- **PPR 第三路召回**：先算语义+词法分，再用 top8 结果的来源节点做种子跑 Personalized PageRank，
+  把节点质量按「该节点覆盖报告数」摊薄后加回报告得分（`score + 0.15 × boost`）。权重
+  `KB_HYBRID_WEIGHT_PPR` 可调，置 0 即关闭；图检索异常只静默降级，不影响主检索。
+- **评测集**：`verification/eval/queries.json` 16 条 query + gold 正则；`python -m app.cli_eval`
+  输出 lexical / hybrid / hybrid+ppr 三种模式的 Recall@5、MRR@10 与逐条名次
+  （基线 `verification/eval/baseline.json`）。
+
+**LLM Wiki（P12 起独立于图谱，下一阶段接入）**
+- 这一层是**模型撰写的知识长文**：把某主题/实体相关报告综合成带引用（[n]）的文章，回答
+  「目前我知道什么、各来源怎么说」；与图谱分工见下方设计节。侧栏「**LLM Wiki**」入口
+  （`/kb/wiki/`）当前是占位说明页。
+- 数据与接口已留位：`GET /api/wiki/articles`、`/api/wiki/stats`、`/api/wiki/lint` 返回空集，
+  `POST /api/wiki/compile` 返回 501 并说明未启用；文章表（`wiki_article` + 来源引用 +
+  版本/模型 + 生成队列）在下一阶段落地，触发方式为「后台增量 + 手动重新生成」。
+- 选择独立成层的原因：图谱是确定性派生物（不调模型、可随时重建），wiki 承载模型生成内容
+  （需要溯源、增量重写、过期与 lint），两者的成本模型与更新节奏完全不同。
 
 **工程化对齐（P0 / P1）**
 - **自定义日期区间**：侧栏「时间」下有起止两个 `date` 输入 + 「应用」，与老站的
@@ -244,7 +253,7 @@ server/app/
   main.py                   FastAPI 组合根（同一批路由挂在 / 与 /kb 两套前缀下）
   config.py                 路径与 AI/向量配置（KB_* / AI_* / EMBED_*）
   data/                     kb.sqlite（索引+向量+状态）、models/（bge-small-zh-v1.5）、digest.json
-wiki/                       P10：编译出的 markdown 页（pages/<slug>.md + index/log/SCHEMA）
+graph/                      P10：编译出的节点 markdown（pages/<slug>.md + index/log/SCHEMA）
   services/kb_index.py      报告扫描、分类/系列派生、标题/日期提取、筛选（60s 缓存）
   services/kb_store.py      SQLite 索引：同步、摘要/正文抽取、搜索、已读/收藏
   services/report_html.py   HTML 内链改写（/mine/* → /kb/*，根绝对路径按真实文件重写）
@@ -256,8 +265,9 @@ wiki/                       P10：编译出的 markdown 页（pages/<slug>.md + 
   services/kb_digest.py     P5：周报 / 主题聚合（带按天缓存）
   services/kb_classify.py   R1：AI 分类（分类 + 二级系列 + 原因；规则兜底）
   cli_classify.py           R1：命令行分类（单篇/小批量/统计，供 Hermes 调用）
-  services/kb_wiki.py       P10/P11：实体聚合 → wiki 页/链接/来源/主题页/共现边，编译与体检
-  api/routes/wiki.py        P10：/api/wiki/* 与可直接浏览的 /wiki/ HTML（实体 + 主题两节）
+  services/kb_graph.py      P10/P11/P12：实体/主题聚合 → 节点/互链/来源/共现边，编译与体检
+  api/routes/graph.py       P12：/api/graph/* 与可直接浏览的 /graph/ HTML（实体 + 主题两节）
+  api/routes/wiki.py        P12：LLM Wiki 占位层（/api/wiki/* 返回空集，compile 501）
   services/kb_public.py     P6：公开标记 + 匿名可访问附件白名单
   cli_enrich.py             批量补 AI sidecar 的 CLI（Hermes 写完报告可调用）
   cli_import_kb_public.py   老站公开状态迁移 CLI（幂等，支持 --dry-run）
@@ -268,7 +278,7 @@ wiki/                       P10：编译出的 markdown 页（pages/<slug>.md + 
   web/templates/index.html  知识库页面（左导航 + 列表 + 抽屉）
   web/static/               style.css / core.js / ui.js / kb.js / icon-192.png
   cli_eval.py               P11：检索评测（lexical / hybrid / hybrid+ppr 三模式）
-  tests/                    pytest：索引/检索/状态、批量、公开外链与老站迁移、P0/P1 基础设施、wiki/图谱/PPR（53 项）
+  tests/                    pytest：索引/检索/状态、批量、公开外链与老站迁移、P0/P1 基础设施、图谱节点/共现边/PPR（57 项）
   ../verification/eval/     P11：评测集 queries.json 与基线 baseline.json
 requirements.txt            后端依赖（fastapi/uvicorn/jinja2/httpx/numpy/fastembed/onnxruntime）
 requirements-dev.txt        开发依赖（pytest）
@@ -331,10 +341,10 @@ host 半默认反代 `127.0.0.1:8816`；如需临时指向其它端口，可设
 | `KB_EMBED_MODEL_DIR` / `KB_EMBED_HF_HOME` | `server/data/models` / `server/data/hf-cache` | 模型与 HF 缓存目录 |
 | `KB_HYBRID_WEIGHT_SEMANTIC` / `KB_HYBRID_WEIGHT_LEXICAL` | `0.62` / `0.38` | 混合检索权重 |
 | `KB_PUBLIC_BASE_URL` | `https://hermes.frankfurtlin.top/kb-public` | 公开外链前缀（与 Caddy 路由一致；改域名时同步改） |
-| `KB_WIKI_DIR` | `<插件根>/wiki` | P10：wiki markdown 输出目录（可指向 Obsidian vault 子目录） |
-| `KB_WIKI_AUTO` | `1` | 同步后是否自动增量编译 wiki |
-| `KB_WIKI_MIN_REPORTS` / `KB_WIKI_MAX_PAGES` | `2` / `400` | 实体至少出现在几篇报告才建页 / 单次最多建多少页 |
-| `KB_WIKI_TOPIC_MIN_REPORTS` | `5` | P11：标签覆盖 ≥N 篇报告才建主题页 |
+| `KB_GRAPH_DIR` | `<插件根>/graph` | P10：节点 markdown 输出目录（可指向 Obsidian vault 子目录） |
+| `KB_GRAPH_AUTO` | `1` | 同步后是否自动增量编译图谱 |
+| `KB_GRAPH_MIN_REPORTS` / `KB_GRAPH_MAX_NODES` | `2` / `400` | 实体至少出现在几篇报告才建节点 / 单次最多建多少节点 |
+| `KB_GRAPH_TOPIC_MIN_REPORTS` | `5` | P11：标签覆盖 ≥N 篇报告才建主题节点 |
 | `KB_HYBRID_WEIGHT_PPR` | `0.15` | P11：PPR 第三路召回的加分权重（0 关闭；评测依据见下） |
 
 删除 `KB_DATA_DIR/kb.sqlite` 即可重建索引（已读/收藏状态会一并清空，属预期）。
@@ -362,12 +372,17 @@ host 半默认反代 `127.0.0.1:8816`；如需临时指向其它端口，可设
 | GET | `/healthz` | 健康检查：`{ok, version, uptime_seconds, reports, ai, embed}`（503 表示索引不可读） |
 | GET | `/api/kb/public` | 公开状态：`{ok, base, paths}` |
 | POST | `/api/kb/public` | body `{path, public}`：公开/取消公开 → `{ok, path, public, url}` |
-| GET | `/api/wiki/pages?kind=&state=&q=&limit=&offset=` | wiki 页列表（按报告数倒序） |
-| GET | `/api/wiki/page/{slug}` | 页详情：正文 markdown、出链、来源报告 |
-| GET | `/api/wiki/stats` | 页数/引用数/互链数/状态分布 |
-| GET | `/api/wiki/lint` | 体检：孤儿页、断链、过期页、高频无页标签 |
-| POST | `/api/wiki/compile` | body `{force?}`：重建 wiki（确定性，hash 命中跳过写盘） |
-| GET | `/wiki/`、`/wiki/{slug}` | 可直接浏览的 wiki 索引与实体页（HTML） |
+| GET | `/api/graph/nodes?kind=&state=&q=&limit=&offset=` | 节点列表（按报告数倒序） |
+| GET | `/api/graph/node/{slug}` | 节点详情：正文 markdown、出链、来源报告 |
+| GET | `/api/graph/neighbors/{slug}` | 共现/互链邻居（带权重） |
+| GET | `/api/graph/related/{slug}` | 该节点直接引用的报告 |
+| GET | `/api/graph/stats` | 节点数/引用数/互链数/状态分布 |
+| GET | `/api/graph/lint` | 体检：孤儿节点、断链、过期节点、高频无节点标签 |
+| POST | `/api/graph/compile` | body `{force?}`：重建图谱（确定性，hash 命中跳过写盘） |
+| GET | `/graph/`、`/graph/{slug}` | 可直接浏览的图谱索引与节点页（HTML） |
+| GET | `/api/wiki/articles`、`/api/wiki/stats`、`/api/wiki/lint` | P12 占位：返回空集（LLM Wiki 下一阶段） |
+| POST | `/api/wiki/compile` | P12 占位：501「LLM Wiki 文章生成尚未启用」 |
+| GET | `/wiki/` | P12 占位说明页（图谱 vs LLM Wiki 分工） |
 | GET | `/reports`、`/reports/{path:path}` | 报告正文；HTML 改写内链后返回 |
 | GET | `/kb-public/`、`/kb-public/reports/{path:path}` | **匿名只读**公开站与公开报告；未公开一律 404 |
 
@@ -383,7 +398,7 @@ iframe 内使用 `/kb/` 这一套。
 ```bash
 # 单元/接口测试（自带临时 reports + 临时索引库，不碰生产数据）
 cd /root/workspace/plugins/dsh-kb/server
-../.venv/bin/python -m pytest        # 53 passed
+../.venv/bin/python -m pytest        # 57 passed
 ../.venv/bin/python -m app.cli_eval  # 检索评测（lexical / hybrid / hybrid+ppr）
 
 # 端到端验收
@@ -394,11 +409,11 @@ node verify-proxy.mjs    # host 半（lib/index.js）隔离验收，不需要装
 
 最近一次结果（2026-11-17，图谱/主题页/PPR/评测集上线后）：
 
-- `pytest` **53 passed** —— 索引同步与分类/系列/日期派生、列表筛选（分类/系列/日期区间/
+- `pytest` **57 passed** —— 索引同步与分类/系列/日期派生、列表筛选（分类/系列/日期区间/
   半开区间/分页/排序）、标题与正文检索（snippet/match）、详情 preview、已读/收藏往返、
   非法路径 400、批量读写、筛选态树计数、公开外链（外链生成、匿名 200、内链改写、附件白名单、
   目录页、越权 404、取消公开立即生效、老站公开状态迁移）、P0/P1（指纹缓存、gzip、
-  统一错误体、healthz、版本号、X-Process-Time、AI 分类存储与同步回归、wiki 编译/增量/阈值/API/HTML）。
+  统一错误体、healthz、版本号、X-Process-Time、AI 分类存储与同步回归、图谱节点编译/增量/阈值/API/HTML、共现边与 PPR）。
 - `verify-app.mjs` **95/95 passed** —— 树/列表/检索/前缀反代/重定向；分类、系列、快捷日期
   与**自定义日期区间**（含倒置拒绝、筛选条、清除恢复）；健康检查、统一错误体、静态指纹
   长缓存、无指纹短缓存、gzip；标题与正文搜索高亮；排序与分页；详情抽屉（preview、自动已读、
@@ -409,10 +424,10 @@ node verify-proxy.mjs    # host 半（lib/index.js）隔离验收，不需要装
 - `verify-proxy.mjs` **11/11 passed** —— 导出与注册、`/kb/`、`/kb/api/kb`、`/kb/static/*`、
   AI 桥鉴权（无密钥/错密钥都按 404 隐藏）
   反代、`/kb?x=1 → 302 /kb/?x=1`、401/403 鉴权闸门、上游未启动时 502 中文提示。
-- `verify-dsh.mjs` **19/19 passed**（真实 DSH 面板内；公开开关是状态自适应，初始已公开时会多 1 项）—— 匿名 401、侧栏「知识库」行、
+- `verify-dsh.mjs` **20/20 passed**（真实 DSH 面板内；公开开关是状态自适应，初始已公开时会多 1 项）—— 匿名 401、侧栏「知识库」行、
   iframe `/kb/`、首屏卡片/计数/分类、搜索高亮、分类筛选、详情抽屉与自动已读、公开开关
   （抽屉按钮 / 复制链接按钮出现与消失，状态自适应）、AI 问答（真实调模型，答案 + 引用）、
-  周报面板、**Wiki 图谱索引**（231 页 / 1615 引用 / 1053 互链）、无插件相关 console error。
+  周报面板、**知识图谱索引**（284 节点 / 3109 引用 / 1459 互链）、**LLM Wiki 占位页**、无插件相关 console error。
 
 AI 问答与周报要调模型（单次 20–40s），host 半对 `/kb/api/kb/ask`、`/kb/api/kb/digest`
 单独放宽到 180s，其余接口仍 10s 超时。
@@ -438,31 +453,32 @@ AI 问答与周报要调模型（单次 20–40s），host 半对 `/kb/api/kb/as
 | `17-history-saved.png` | 生产页：搜索历史 + 左导航「已保存」 |
 | `18-tags-prod.png` | 生产页：左导航「标签」栏 + 点标签后的筛选条（标签：#Minecraft） |
 | `19-drawer-meta-prod.png` | 生产页：抽屉元数据行（入库时间 / 路径） |
-| `20-dsh-wiki.png` | 真实 DSH 面板内的 Wiki 索引（231 页 / 1615 引用 / 1053 互链，`verify-dsh.mjs`） |
+| `20-dsh-graph.png` | 真实 DSH 面板内的知识图谱索引（284 节点 / 3109 引用 / 1459 互链，`verify-dsh.mjs`） |
+| `21-dsh-wiki-placeholder.png` | 真实 DSH 面板内的 LLM Wiki 占位页（两层分工说明，`verify-dsh.mjs`） |
 
 语法门：`node --check lib/index.js && node --check client.js && node --check verification/verify-app.mjs && node --check verification/verify-proxy.mjs`；
 Python 用 `/usr/bin/python3.11 -m py_compile $(find server -name '*.py')`。
 
-## 知识图谱 + LLM Wiki（P10）
+## 知识图谱（P10 → P11 → P12 独立成层）
 
 **为什么是「派生层」而不是新引擎**（完整调研见 [`docs/GRAPH-WIKI.md`](docs/GRAPH-WIKI.md)）：
 对比 GraphRAG / LightRAG / nano-graphrag / graphiti / cognee 与 Karpathy LLM Wiki、
 basic-memory 等 11 个实现后，结论是本项目的缺口不在 RAG 引擎，而在
-「一张 wiki 页表 + 一张反向引用表 + 一次增量编译」：
+「一张节点表 + 一张反向引用表 + 一次增量编译」。P12 起图谱（确定性派生物）与 LLM Wiki（模型撰写的文章）拆成两层，本节只讲图谱：
 
-- `reports/` 是唯一事实源；`wiki/` 与三张表都是派生物，随时可删可重建；
-- 不引入图数据库：实体关系先活在 SQLite，等 wiki 页 >150 再考虑 PPR 第三路召回；
+- `reports/` 是唯一事实源；`graph/` 与相关表都是派生物，随时可删可重建；
+- 不引入图数据库：实体关系先活在 SQLite；节点数远超 150 后已启用 PPR 第三路召回（P11）；
 - 页面检索靠**向量**而不是 `index.md` 导航——Karpathy 原文适用规模约 100 源，
   本库 470+ 篇远超，纯导航不可行。
 
-**流程**：`scan` → AI 实体（P1）→ 别名归并 → 按「出现篇数」建页 → 写
-`wiki/pages/<slug>.md` + 三张表 → 页正文建向量 → 与报告一起混合排序。
+**流程**：`scan` → AI 实体（P1）→ 别名归并 → 按「出现篇数」建节点 → 写
+`graph/pages/<slug>.md` + 四张表 → 节点正文建向量 → 与报告一起混合排序。
 
 **表**：
 
 | 表 | 用途 |
 | --- | --- |
-| `wiki_page` | 一页一行：slug/title/kind/entity_type/body_md/source_hash/state/report_count/embedding |
+| `wiki_page` | 一节点一行（历史表名保留）：slug/title/kind/entity_type/body_md/source_hash/state/report_count/embedding |
 | `wiki_link` | 页间出链（`[[slug|name]]`），用于互链与后续 PPR |
 | `wiki_source` | 反向引用：页 ← 报告；删改报告靠它定位要重建的页 |
 | `compile_job` | 增量编译台账（report_path × page_slug + status） |
@@ -474,7 +490,7 @@ basic-memory 等 11 个实现后，结论是本项目的缺口不在 RAG 引擎�
 ## 图谱第三路召回与检索评测（P11）
 
 **实体边 `entity_edges`**：`(source_slug, target_slug, kind='cooccur', weight)`，按 slug 字典序
-存无向边，`weight` = 两实体共同出现在多少篇报告里；编译时与 wiki 页同一事务整体替换
+存无向边，`weight` = 两实体共同出现在多少篇报告里；编译时与节点页同一事务整体替换
 （避免二次连接 `database is locked`）。图 = 互链 + 共现边，用于 PPR 与后续主题视图。
 
 **主题页**：标签 → `topic-*` 页。实体页回答「这个东西是什么」，主题页回答「这批报告围绕什么」；
@@ -599,13 +615,12 @@ handle /kb-public/* {
 - 周报目前按自然日窗口（默认最近 7 天）取报告日期，不按生成时间；无 AI 摘要的老报告只能
   贡献标题/统计。
 - 报告日期来自目录名 `YYYYMMDD/`；无日期目录的报告不参与日期筛选（沿用原站规则）。
-- **分类与系列目前仍是规则推导**（标题关键词 + 路径 + HTML 覆盖），AI 只负责摘要/标签/向量；
-  「AI 主导分类」是 R1，尚未实现。
-- **标签还不是一等公民**：AI 标签只在卡片/抽屉里展示，不能点标签筛选、没有标签页、不做
-  同义合并（R2）。
-- **没有跨报告图谱与主题页**：只有「标签/实体」这种软关联，图谱可视化与 LLM wiki 主题页是
+- **分类已由 AI 主导**（v0.4 起）：规则只作兜底基线，AI 可改一级分类与二级系列，抽屉里能看到
+  「AI 分类 / 规则分类」来源；批量重跑走 `/api/kb/classify` 或 `cli_classify.py`。
+- **标签已可筛选**（v0.3 起左导航「标签 AI 生成」），但还没有标签页/同义合并/人工增删标签（R2 剩余）。
+- **没有可视化画布与 LLM Wiki 文章**：图谱以索引页 + 节点页 + 邻域/相关报告 API 呈现，暂无力导向图；
   R3/R4。
-- **检索质量没有评测集**：目前靠人工抽查与 e2e 通过率，Recall@5 / MRR 回归是 R5。
+- **检索评测集仍偏小**：现有 16 条 query（`verification/eval/queries.json`）覆盖主要场景，但不足以支撑每次改动的统计显著性，扩充与自动回归是 R5。
 - 报告正文里的站外链接、`/login.html` 等不存在的目标保持原样，点击可能在 iframe 内 404
   或跳出 DSH 路由；这是报告自身内容，插件不做兜底。
 - 公开外链依赖 Caddy 的 `/kb-public` 路由与 `KB_PUBLIC_BASE_URL` 一致；换域名/换前缀时两处

@@ -116,15 +116,14 @@ EMBED_INTERVAL = max(0.5, float(os.environ.get("KB_EMBED_INTERVAL", "2") or 2))
 HYBRID_WEIGHT_SEMANTIC = float(os.environ.get("KB_HYBRID_SEMANTIC", "0.62") or 0.62)
 HYBRID_WEIGHT_LEXICAL = float(os.environ.get("KB_HYBRID_LEXICAL", "0.38") or 0.38)
 HYBRID_WEIGHT_PPR = float(os.environ.get("KB_HYBRID_WEIGHT_PPR", "0.15") or 0.15)
-WIKI_TOPIC_MIN_REPORTS = int(os.environ.get("KB_WIKI_TOPIC_MIN_REPORTS", "5") or 5)
-
-# ---------- P10：知识图谱 + LLM Wiki（wiki 页是 reports 的派生物） ----------
-# wiki 目录：markdown 页 + SCHEMA/index/log 元数据，可直接用 Obsidian 打开浏览。
-# 默认放在插件根目录（而不是 data/），方便用户把整个目录当 Obsidian vault 同步；
-# 内容由编译任务重写，不要手工只改文件（改了请重跑编译）。
-WIKI_DIR = _path_env("KB_WIKI_DIR", str(PLUGIN_ROOT / "wiki"))
-WIKI_AUTO = os.environ.get("KB_WIKI_AUTO", "1").strip().lower() not in ("0", "false", "no", "off")
-# 一个实体至少在多少篇报告里出现才为它建 wiki 页（1 = 全建，可能上千页）。
-WIKI_MIN_REPORTS = max(1, int(os.environ.get("KB_WIKI_MIN_REPORTS", "2") or 2))
-# 单次编译最多生成多少页（防止一次把长尾全铺开）。
-WIKI_MAX_PAGES = max(1, int(os.environ.get("KB_WIKI_MAX_PAGES", "400") or 400))
+# ---------- P10/P12：知识图谱节点（reports/ 的派生物；与 LLM Wiki 分层） ----------
+# 节点 markdown 目录：pages/<slug>.md + SCHEMA/index/log 元数据，可直接用 Obsidian 打开。
+# 默认在插件根目录（而不是 data/），方便整目录当 Obsidian vault；内容由编译任务重写。
+GRAPH_DIR = _path_env("KB_GRAPH_DIR", os.environ.get("KB_WIKI_DIR") or str(PLUGIN_ROOT / "graph"))
+GRAPH_AUTO = (os.environ.get("KB_GRAPH_AUTO") or os.environ.get("KB_WIKI_AUTO") or "1").strip().lower() not in ("0", "false", "no", "off")
+# 一个实体至少在多少篇报告里出现才建节点（1 = 全建，可能上千个）。
+GRAPH_MIN_REPORTS = max(1, int(os.environ.get("KB_GRAPH_MIN_REPORTS") or os.environ.get("KB_WIKI_MIN_REPORTS") or 2))
+# 单次编译最多生成多少节点（防止一次把长尾全铺开）。
+GRAPH_MAX_NODES = max(1, int(os.environ.get("KB_GRAPH_MAX_NODES") or os.environ.get("KB_WIKI_MAX_PAGES") or 400))
+# 标签覆盖多少篇报告才建主题节点。
+GRAPH_TOPIC_MIN_REPORTS = max(1, int(os.environ.get("KB_GRAPH_TOPIC_MIN_REPORTS") or os.environ.get("KB_WIKI_TOPIC_MIN_REPORTS") or 5))

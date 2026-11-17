@@ -31,19 +31,19 @@ def build_pending(limit: int | None = None) -> dict:
     return {"ok": True, "embedded": len(items), **stats}
 
 
-def build_pending_wiki(limit: int | None = None) -> dict:
+def build_pending_nodes(limit: int | None = None) -> dict:
     """给 wiki 页补向量（让 wiki 页也能进混合检索）。"""
     model = config.EMBED_MODEL
     if not kb_embed.available():
         return {"ok": False, "embedded": 0}
-    items = kb_store.next_pending_wiki_embedding(limit or config.EMBED_BATCH, model=model)
+    items = kb_store.next_pending_node_embedding(limit or config.EMBED_BATCH, model=model)
     if not items:
-        return {"ok": True, "embedded": 0, **kb_store.wiki_embed_stats(model)}
-    vectors = kb_embed.embed_texts([kb_embed.wiki_document_text(item) for item in items])
+        return {"ok": True, "embedded": 0, **kb_store.node_embed_stats(model)}
+    vectors = kb_embed.embed_texts([kb_embed.node_document_text(item) for item in items])
     for item, vector in zip(items, vectors):
-        kb_store.set_wiki_embedding(item["slug"], vector, model)
-    stats = kb_store.wiki_embed_stats(model)
-    logger.info("wiki 向量补齐 %s 页：%s/%s", len(items), stats["embedded"], stats["total"])
+        kb_store.set_node_embedding(item["slug"], vector, model)
+    stats = kb_store.node_embed_stats(model)
+    logger.info("图谱节点向量补齐 %s 页：%s/%s", len(items), stats["embedded"], stats["total"])
     return {"ok": True, "embedded": len(items), **stats}
 
 
@@ -79,7 +79,7 @@ def search(
                 limit=limit,
                 semantic_weight=config.HYBRID_WEIGHT_SEMANTIC,
                 lexical_weight=config.HYBRID_WEIGHT_LEXICAL,
-                include_wiki=not any((category, series, date_from, date_to)) and view == "all",
+                include_nodes=not any((category, series, date_from, date_to)) and view == "all",
                 ppr_weight=config.HYBRID_WEIGHT_PPR,
             )
             # 向量还没补齐（例如刚重启）时，语义结果可能为空：退回词法。

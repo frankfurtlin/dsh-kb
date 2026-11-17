@@ -98,7 +98,7 @@ def embed_query(text: str) -> list[float]:
     return vectors[0] if vectors else []
 
 
-def wiki_document_text(page: dict) -> str:
+def node_document_text(page: dict) -> str:
     """wiki 页送入模型的文本：标题 + 实体类型 + 页正文（markdown 去掉标记后截断）。"""
     body = str(page.get("body_md") or "")
     body = body.split("---", 2)[-1] if body.startswith("---") else body

@@ -51,7 +51,7 @@ def answer(question: str, *, limit: int = _MAX_CITATIONS) -> dict:
     citations = []
     blocks = []
     for number, item in enumerate(items, 1):
-        if item.get("kind") == "wiki":
+        if item.get("kind") == "node":
             summary = item.get("summary") or ""
             citations.append(
                 {
@@ -60,7 +60,7 @@ def answer(question: str, *, limit: int = _MAX_CITATIONS) -> dict:
                     "path": item["path"],
                     "url": item["url"],
                     "date": "",
-                    "category": f"Wiki · {item.get('entity_type') or 'entity'}",
+                    "category": f"图谱 · {item.get('entity_type') or 'entity'}",
                     "score": item.get("score") or item.get("semantic_score") or 0,
                 }
             )
@@ -104,9 +104,9 @@ def answer(question: str, *, limit: int = _MAX_CITATIONS) -> dict:
         {
             "title": item["title"],
             "path": item["path"],
-            "url": item.get("url") if item.get("kind") == "wiki" else f"reports/{item['path']}",
+            "url": item.get("url") if item.get("kind") == "node" else f"reports/{item['path']}",
             "date": item.get("date", ""),
-            "category": (f"Wiki · {item.get('entity_type')}" if item.get("kind") == "wiki"
+            "category": (f"图谱 · {item.get('entity_type')}" if item.get("kind") == "node"
                          else item.get("category", "")),
             "summary": item.get("summary_ai") or item.get("summary") or "",
             "kind": item.get("kind", "report"),

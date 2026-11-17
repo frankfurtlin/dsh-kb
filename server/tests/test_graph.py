@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.services import kb_store, kb_wiki
+from app.services import kb_graph, kb_store
 
 
 def _seed(path: str, entities: list[dict], tags: list[str]) -> None:
@@ -25,7 +25,7 @@ def _prepare(client) -> None:
         [{"name": "中国铝业", "type": "公司"}, {"name": "电解铝", "type": "主题"}],
         ["A股", "电解铝"],
     )
-    kb_wiki.build(force=True)
+    kb_graph.build(force=True)
 
 
 def test_entity_edges_built(client):
@@ -55,17 +55,17 @@ def test_entity_edges_built(client):
 def test_topic_pages_created(client):
     _prepare(client)
 
-    detail = kb_wiki.page_detail("topic-a股")
+    detail = kb_graph.page_detail("topic-a股")
     assert detail is not None
     assert detail["kind"] == "topic"
     assert detail["report_count"] == 2
     assert "相关报告" in detail["body_md"]
 
-    listing = kb_wiki.page_list(kind="topic")
+    listing = kb_graph.page_list(kind="topic")
     assert listing["total"] >= 1
     assert any(item["slug"] == "topic-a股" for item in listing["items"])
 
-    stats = kb_wiki.stats()
+    stats = kb_graph.stats()
     assert stats["topics"] >= 1
     assert stats["edges"] >= 1
 

@@ -64,7 +64,10 @@ page.on('console', (message) => {
   if (pluginErrorPattern.test(location)) consoleErrors.push(`${message.text()} @ ${location}`)
 })
 page.on('requestfailed', (request) => {
-  if (pluginErrorPattern.test(request.url())) consoleErrors.push(`requestfailed ${request.url()}`)
+  const reason = (request.failure() && request.failure().errorText) || ''
+  // 导航/切面板会主动取消在途 fetch（net::ERR_ABORTED），不算插件错误
+  if (reason.includes('ERR_ABORTED')) return
+  if (pluginErrorPattern.test(request.url())) consoleErrors.push(`requestfailed ${request.url()} ${reason}`)
 })
 
 async function waitForFrame() {
@@ -197,15 +200,31 @@ try {
     await page.waitForTimeout(300)
   }
 
-  // P10：Wiki 图谱（iframe 内从侧栏入口进入，验证 wiki 页可浏览）
-  await frame.click('#kb-wiki-entry')
+  // P12：知识图谱与 LLM Wiki 是两个入口，分别验证（图谱可浏览；Wiki 为占位层）
+  await frame.click('#kb-graph-entry')
   await page.waitForTimeout(1500)
-  const wikiFrame = page.frames().find((item) => item.url().includes('/kb/wiki/'))
-  const wikiTitle = wikiFrame ? await wikiFrame.title() : ''
-  const wikiLinks = wikiFrame ? await wikiFrame.locator('a[href]').count() : 0
-  check('iframe 内打开 Wiki 图谱页', Boolean(wikiFrame) && wikiTitle.includes('Wiki') && wikiLinks > 10,
-    `title=${wikiTitle} links=${wikiLinks}`)
-  await page.screenshot({ path: join(OUT, '20-dsh-wiki.png'), fullPage: true })
+  const graphFrame = page.frames().find((item) => item.url().includes('/kb/graph/'))
+  const graphTitle = graphFrame ? await graphFrame.title() : ''
+  const graphLinks = graphFrame ? await graphFrame.locator('a[href]').count() : 0
+  check('iframe 内打开知识图谱页', Boolean(graphFrame) && graphTitle.includes('知识图谱') && graphLinks > 10,
+    `title=${graphTitle} links=${graphLinks}`)
+  await page.screenshot({ path: join(OUT, '20-dsh-graph.png'), fullPage: true })
+
+  // 回到知识库面板首页，再从同一 iframe 的侧栏进入 LLM Wiki（验证两个入口各自独立）
+  if (graphFrame) {
+    await graphFrame.goto(`${new globalThis.URL(URL).origin}/kb/`, { waitUntil: 'domcontentloaded' })
+    await graphFrame.waitForSelector('#kb-wiki-entry', { timeout: 15000 })
+    await graphFrame.click('#kb-wiki-entry')
+    await page.waitForTimeout(1500)
+    const wikiFrame = page.frames().find((item) => item.url().includes('/kb/wiki/'))
+    const wikiText = wikiFrame ? await wikiFrame.locator('body').innerText() : ''
+    check('iframe 内 LLM Wiki 占位页说明两层分工',
+      Boolean(wikiFrame) && wikiText.includes('LLM Wiki') && wikiText.includes('知识图谱'),
+      `len=${wikiText.length}`)
+    await page.screenshot({ path: join(OUT, '21-dsh-wiki-placeholder.png'), fullPage: true })
+  } else {
+    check('iframe 内 LLM Wiki 占位页说明两层分工', false, '知识图谱 iframe 未找到，无法回到面板')
+  }
   await page.goto(URL)
   await page.waitForTimeout(600)
 
