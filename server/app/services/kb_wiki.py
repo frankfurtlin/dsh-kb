@@ -17,6 +17,7 @@ import json
 import os
 import re
 import time
+from collections import Counter
 from pathlib import Path
 
 from app import config
@@ -210,7 +211,8 @@ def _render_page(title: str, entity_type: str, reports: list[dict], related: lis
     return "\n".join(lines)
 
 
-def _index_md(pages: list[dict], updated_at: str) -> str:
+def _index_md(pages: list[dict], topics: list[dict] | None, updated_at: str) -> str:
+    topics = topics or []
     lines = [
         "---",
         "title: 知识库 Wiki 索引",
@@ -220,13 +222,17 @@ def _index_md(pages: list[dict], updated_at: str) -> str:
         "",
         "# 知识库 Wiki 索引",
         "",
-        f"> 自动生成 · 共 {len(pages)} 页 · {updated_at}",
+        f"> 自动生成 · {len(pages)} 个实体页 · {len(topics)} 个主题页 · {updated_at}",
         "",
-        "按提及报告数排序：",
+        "## 实体页（按提及报告数排序）",
         "",
     ]
     for page in pages:
         lines.append(f"- [[{page['slug']}|{page['title']}]]（{page['report_count']} 篇）")
+    if topics:
+        lines += ["", "## 主题页（按标签覆盖报告数排序）", ""]
+        for topic in topics:
+            lines.append(f"- [[{topic['slug']}|{topic['title']}]]（{topic['report_count']} 篇）")
     lines.append("")
     return "\n".join(lines)
 
@@ -248,6 +254,176 @@ _SCHEMA_MD = """# Wiki Schema
 - 页面是**派生物**：不要只改这里，改完请重新跑 `POST /api/wiki/compile`。
 - 编译是确定性的（不调模型），可以由 reports/ 随时重建。
 """
+
+
+# ---------- P11：主题页（来自 AI 标签） ----------
+
+
+def _topic_slug(name: str) -> str:
+    return f"topic-{slugify(name)}"
+
+
+def _topic_candidates(conn, entity_titles: set[str]) -> list[dict]:
+    """从 tags/report_tags 里挑达到阈值的标签，生成主题页候选（含来源报告路径）。"""
+    rows = conn.execute(
+        """
+        SELECT t.name AS name, r.path AS path, r.date AS date
+        FROM report_tags rt
+        JOIN tags t ON t.id = rt.tag_id
+        JOIN reports r ON r.id = rt.report_id
+        """
+    ).fetchall()
+    grouped: dict[str, dict] = {}
+    for row in rows:
+        name = normalize_name(row["name"])
+        if len(name) < 2 or name in JUNK_NAMES or name in entity_titles:
+            continue
+        item = grouped.setdefault(name, {"name": name, "paths": set(), "latest": ""})
+        item["paths"].add(row["path"])
+        if row["date"] and row["date"] > item["latest"]:
+            item["latest"] = row["date"]
+    topics = [
+        {
+            "name": item["name"],
+            "slug": _topic_slug(item["name"]),
+            "paths": sorted(item["paths"]),
+            "latest": item["latest"],
+        }
+        for item in grouped.values()
+        if len(item["paths"]) >= config.WIKI_TOPIC_MIN_REPORTS
+    ]
+    topics.sort(key=lambda t: (-len(t["paths"]), t["name"]))
+    return topics
+
+
+def _render_topic(topic: dict, reports_by_path: dict, related_entities: list[dict],
+                  related_tags: list[tuple[str, int]], updated_at: str) -> str:
+    categories = Counter(
+        reports_by_path[path]["category"] for path in topic["paths"] if path in reports_by_path
+    )
+    lines = [
+        "---",
+        f"title: 主题 · {topic['name']}",
+        f"slug: {topic['slug']}",
+        "kind: topic",
+        f"report_count: {len(topic['paths'])}",
+        f"updated_at: {updated_at}",
+        "---",
+        "",
+        f"# 主题 · {topic['name']}",
+        "",
+        f"> 标签 · {len(topic['paths'])} 篇报告 · 最近 {topic['latest'] or '—'}",
+        "",
+        "## 概述",
+        "",
+        f"「{topic['name']}」这个标签覆盖 {len(topic['paths'])} 篇报告，分布在"
+        + "、".join(f"{name} {count} 篇" for name, count in categories.most_common(4)) + "。",
+        "",
+        "## 相关报告",
+        "",
+    ]
+    for path in topic["paths"][:40]:
+        report = reports_by_path.get(path) or {}
+        lines.append(f"- {(report.get('date') or '')[:10]} [[report:{path}|{report.get('title') or path}]]")
+    if related_entities:
+        lines += ["", "## 主要实体", ""]
+        for item in related_entities:
+            lines.append(f"- [[{item['slug']}|{item['name']}]]（{item['count']} 篇）")
+    if related_tags:
+        lines += ["", "## 相关标签", ""]
+        lines.append(" · ".join(f"#{name}（{count}）" for name, count in related_tags))
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _write_topic_pages(conn, topics: list[dict], reports_by_path: dict) -> tuple[int, int]:
+    """写入主题页（hash 命中跳过）；返回 (written, skipped)。"""
+    existing = {
+        row["slug"]: row
+        for row in conn.execute(
+            "SELECT id, slug, source_hash, title, report_count, state FROM wiki_page WHERE kind='topic'"
+        )
+    }
+    written = skipped = 0
+    now = _now()
+    page_dir = _page_dir()
+    for topic in topics:
+        paths = topic["paths"]
+        source_hash = _hash(
+            [f"{path}:{reports_by_path[path]['content_hash']}" for path in paths if path in reports_by_path]
+        )
+        row = existing.get(topic["slug"])
+        if (row is not None and row["source_hash"] == source_hash
+                and row["report_count"] == len(paths) and row["state"] == "live"):
+            skipped += 1
+            continue
+        # 相关实体：主题覆盖报告里出现的实体页
+        counts: Counter = Counter()
+        for path in paths:
+            report = reports_by_path.get(path) or {}
+            for entity in report.get("entities") or []:
+                key = _alias_key(entity["name"])
+                counts[key] += 1
+        related_entities = []
+        for key, count in counts.most_common(10):
+            entity_row = conn.execute(
+                "SELECT slug, title FROM wiki_page WHERE kind='entity' AND state='live' AND lower(replace(title,' ','')) = ?",
+                (key,),
+            ).fetchone()
+            if entity_row:
+                related_entities.append({"slug": entity_row["slug"], "name": entity_row["title"], "count": count})
+        # 相关标签：与主题共同出现的其它标签
+        related_tags = []
+        for row_tag in conn.execute(
+            """
+            SELECT t.name AS name, COUNT(*) AS n
+            FROM report_tags rt
+            JOIN tags t ON t.id = rt.tag_id
+            JOIN reports r ON r.id = rt.report_id
+            WHERE r.path IN (SELECT value FROM json_each(?))
+              AND t.name != ?
+            GROUP BY t.id ORDER BY n DESC LIMIT 8
+            """,
+            (json.dumps(paths), topic["name"]),
+        ):
+            related_tags.append((row_tag["name"], row_tag["n"]))
+        body = _render_topic(topic, reports_by_path, related_entities, related_tags, now)
+        conn.execute(
+            """
+            INSERT INTO wiki_page
+                (slug, kind, title, entity_type, body_md, source_hash, state,
+                 report_count, generated_by, model, created_at, updated_at)
+            VALUES (?, 'topic', ?, '主题', ?, ?, 'live', ?, 'deterministic', '', ?, ?)
+            ON CONFLICT(slug) DO UPDATE SET
+                title=excluded.title, entity_type=excluded.entity_type, body_md=excluded.body_md,
+                source_hash=excluded.source_hash, state='live',
+                report_count=excluded.report_count, updated_at=excluded.updated_at
+            """,
+            (topic["slug"], f"主题 · {topic['name']}", body, source_hash, len(paths), now, now),
+        )
+        page_id = conn.execute("SELECT id FROM wiki_page WHERE slug=?", (topic["slug"],)).fetchone()[0]
+        conn.execute("DELETE FROM wiki_link WHERE page_id=?", (page_id,))
+        for item in related_entities:
+            conn.execute(
+                "INSERT OR IGNORE INTO wiki_link (page_id, target_slug) VALUES (?, ?)",
+                (page_id, item["slug"]),
+            )
+        conn.execute("DELETE FROM wiki_source WHERE page_id=?", (page_id,))
+        for path in paths:
+            conn.execute(
+                "INSERT OR IGNORE INTO wiki_source (page_id, path, contribution) VALUES (?, ?, 'topic')",
+                (page_id, path),
+            )
+        conn.execute("DELETE FROM compile_job WHERE page_slug=?", (topic["slug"],))
+        for path in paths:
+            conn.execute(
+                "INSERT OR REPLACE INTO compile_job (report_path, page_slug, status, attempts, updated_at)"
+                " VALUES (?, ?, 'done', 0, ?)",
+                (path, topic["slug"], now),
+            )
+        _write_text(page_dir / f"{topic['slug']}.md", body)
+        written += 1
+    return written, skipped
 
 
 # ---------- 编译 ----------
@@ -294,6 +470,11 @@ def build(force: bool = False, limit_pages: int | None = None) -> dict:
             by_slug.setdefault(group["slug"], group)
         # 只有建了页的实体才允许出现在「相关实体」里（否则产生断链）。
         page_slugs = set(by_slug)
+
+        # P11：主题页（AI 标签 → kind=topic），与实体页共享同一套页表。
+        entity_titles = {group["name"] for group in by_slug.values()}
+        topics = _topic_candidates(conn, entity_titles)
+        topic_slugs = {topic["slug"] for topic in topics}
 
         existing = {
             row["slug"]: row
@@ -369,8 +550,28 @@ def build(force: bool = False, limit_pages: int | None = None) -> dict:
             _write_text(page_dir / f"{slug}.md", body)
             written += 1
 
+        topic_written, topic_skipped = _write_topic_pages(conn, topics, reports_by_path)
+        written += topic_written
+        skipped += topic_skipped
+
+        # P11：实体共现边（多行关系）——同一篇报告里共同出现的实体页配对计数。
+        slugs_by_path: dict[str, list[str]] = {}
+        for slug, group in by_slug.items():
+            for path in group["reports"]:
+                slugs_by_path.setdefault(path, []).append(slug)
+        pair_counts: Counter = Counter()
+        for path_slugs in slugs_by_path.values():
+            ordered = sorted(set(path_slugs))
+            for index, left in enumerate(ordered):
+                for right in ordered[index + 1:]:
+                    pair_counts[(left, right)] += 1
+        edge_count = kb_store.replace_entity_edges(
+            ((left, right, weight) for (left, right), weight in pair_counts.items()),
+            conn=conn,
+        )
+
         # 清掉不再满足条件的页（也不满足阈值 / 实体消失）。
-        keep = set(by_slug)
+        keep = set(by_slug) | topic_slugs
         removed = 0
         for slug, row in existing.items():
             if slug in keep:
@@ -392,15 +593,22 @@ def build(force: bool = False, limit_pages: int | None = None) -> dict:
             {"slug": slug, "title": group["name"], "report_count": len(group["reports"])}
             for slug, group in sorted(by_slug.items(), key=lambda kv: -len(kv[1]["reports"]))
         ]
-        _write_text(Path(config.WIKI_DIR) / "index.md", _index_md(pages, now))
+        topic_list = [
+            {"slug": topic["slug"], "title": f"主题 · {topic['name']}", "report_count": len(topic["paths"])}
+            for topic in topics
+        ]
+        _write_text(Path(config.WIKI_DIR) / "index.md", _index_md(pages, topic_list, now))
         _write_text(Path(config.WIKI_DIR) / "SCHEMA.md", _SCHEMA_MD)
         _write_text(
             Path(config.WIKI_DIR) / "log.md",
             f"# 编译日志\n\n- {now} 全量构建：{written} 写 / {skipped} 跳过 / {removed} 删除，"
-            f"共 {len(by_slug)} 页，耗时 {int((time.time() - started) * 1000)}ms\n",
+            f"{len(by_slug)} 个实体页 + {len(topics)} 个主题页 / {edge_count} 条共现边，"
+            f"耗时 {int((time.time() - started) * 1000)}ms\n",
         )
         return {
             "pages": len(by_slug),
+            "topics": len(topics),
+            "edges": edge_count,
             "written": written,
             "skipped": skipped,
             "removed": removed,
@@ -529,13 +737,20 @@ def stats() -> dict:
         }
         links = conn.execute("SELECT COUNT(*) FROM wiki_link").fetchone()[0]
         sources = conn.execute("SELECT COUNT(*) FROM wiki_source").fetchone()[0]
+        edges = conn.execute("SELECT COUNT(*) FROM entity_edges").fetchone()[0]
+        topics = conn.execute("SELECT COUNT(*) FROM wiki_page WHERE kind='topic'").fetchone()[0]
+        entities = conn.execute("SELECT COUNT(*) FROM wiki_page WHERE kind='entity'").fetchone()[0]
         return {
             "pages": row[0],
+            "entities": entities,
+            "topics": topics,
             "total_report_links": row[1],
             "states": states,
             "links": links,
+            "edges": edges,
             "sources": sources,
             "min_reports": config.WIKI_MIN_REPORTS,
+            "topic_min_reports": config.WIKI_TOPIC_MIN_REPORTS,
         }
     finally:
         conn.close()

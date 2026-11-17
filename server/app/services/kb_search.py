@@ -80,6 +80,7 @@ def search(
                 semantic_weight=config.HYBRID_WEIGHT_SEMANTIC,
                 lexical_weight=config.HYBRID_WEIGHT_LEXICAL,
                 include_wiki=not any((category, series, date_from, date_to)) and view == "all",
+                ppr_weight=config.HYBRID_WEIGHT_PPR,
             )
             # 向量还没补齐（例如刚重启）时，语义结果可能为空：退回词法。
             if items or total == 0:

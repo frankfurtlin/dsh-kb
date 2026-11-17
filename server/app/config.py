@@ -115,6 +115,8 @@ EMBED_INTERVAL = max(0.5, float(os.environ.get("KB_EMBED_INTERVAL", "2") or 2))
 # 混合检索权重：语义分 / 词法命中 / 新鲜度加成。
 HYBRID_WEIGHT_SEMANTIC = float(os.environ.get("KB_HYBRID_SEMANTIC", "0.62") or 0.62)
 HYBRID_WEIGHT_LEXICAL = float(os.environ.get("KB_HYBRID_LEXICAL", "0.38") or 0.38)
+HYBRID_WEIGHT_PPR = float(os.environ.get("KB_HYBRID_WEIGHT_PPR", "0.15") or 0.15)
+WIKI_TOPIC_MIN_REPORTS = int(os.environ.get("KB_WIKI_TOPIC_MIN_REPORTS", "5") or 5)
 
 # ---------- P10：知识图谱 + LLM Wiki（wiki 页是 reports 的派生物） ----------
 # wiki 目录：markdown 页 + SCHEMA/index/log 元数据，可直接用 Obsidian 打开浏览。

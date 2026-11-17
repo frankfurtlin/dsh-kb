@@ -68,6 +68,7 @@ os.environ["KB_AI_SECRET_FILE"] = str(_TMP_ROOT / "no-ai-bridge-secret")
 os.environ["KB_PUBLIC_BASE_URL"] = "https://example.test/kb-public"
 os.environ["KB_WIKI_DIR"] = str(_TMP_ROOT / "wiki")
 os.environ["KB_WIKI_AUTO"] = "0"
+os.environ["KB_WIKI_TOPIC_MIN_REPORTS"] = "2"
 
 from fastapi.testclient import TestClient  # noqa: E402
 

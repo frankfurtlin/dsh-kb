@@ -148,6 +148,22 @@ SQLite kb.sqlite ── ② 正文摘要 + 全文（≤2 万字）
   混合排序；`/api/kb/ask` 的引用里 wiki 页标 `Wiki · <实体类型>`。
 - 体检：`GET /api/wiki/lint` 返回孤儿页/断链/过期页/高频无页标签，供每周巡检。
 
+**知识图谱 + 第三路召回（P11）**
+- **共现边**：`entity_edges` 表记录实体页之间的共现关系（同一篇报告里出现过多少次，
+  `weight` 即篇数），编译时整体重建；页级无向图 = wiki 互链（权重 1）+ 共现边（权重
+  `min(weight,5)`），30s 缓存。
+- **主题页**：把标签按覆盖报告数聚成 `topic-*` 页（`KB_WIKI_TOPIC_MIN_REPORTS`，默认 ≥5 篇；
+  与实体页同名/噪声名跳过），页内含跨分类分布、相关报告、主要实体、相关标签；
+  索引页 `/kb/wiki/` 分「实体页」「主题页」两节。当前 474 篇 → **284 页 = 231 实体 + 53 主题 /
+  3109 引用 / 1459 互链 / 1120 条共现边**。
+- **PPR 第三路召回**：检索先算语义+词法分，再用 top8 结果的来源页做种子跑
+  Personalized PageRank，把页质量按「该页覆盖报告数」摊薄后加回报告得分
+  （`score + 0.15 × boost`）。权重 `KB_HYBRID_WEIGHT_PPR` 可调，置 0 即关闭；
+  图检索异常只静默降级，不影响主检索。
+- **评测集**：`verification/eval/queries.json` 16 条 query + gold 正则（覆盖行情/个股/板块/
+  版本/精读/影像/技术长文）；`python -m app.cli_eval` 输出每模式 Recall@5、MRR@10 与逐条名次，
+  可存档对比（`verification/eval/baseline.json`）。
+
 **工程化对齐（P0 / P1）**
 - **自定义日期区间**：侧栏「时间」下有起止两个 `date` 输入 + 「应用」，与老站的
   `#kb-from/#kb-to` 等价；只填一边时是半开区间，起晚于止会 toast 提示拒绝；筛选条显示
@@ -240,8 +256,8 @@ wiki/                       P10：编译出的 markdown 页（pages/<slug>.md + 
   services/kb_digest.py     P5：周报 / 主题聚合（带按天缓存）
   services/kb_classify.py   R1：AI 分类（分类 + 二级系列 + 原因；规则兜底）
   cli_classify.py           R1：命令行分类（单篇/小批量/统计，供 Hermes 调用）
-  services/kb_wiki.py       P10：实体聚合 → wiki 页/链接/来源，编译与体检
-  api/routes/wiki.py        P10：/api/wiki/* 与可直接浏览的 /wiki/ HTML
+  services/kb_wiki.py       P10/P11：实体聚合 → wiki 页/链接/来源/主题页/共现边，编译与体检
+  api/routes/wiki.py        P10：/api/wiki/* 与可直接浏览的 /wiki/ HTML（实体 + 主题两节）
   services/kb_public.py     P6：公开标记 + 匿名可访问附件白名单
   cli_enrich.py             批量补 AI sidecar 的 CLI（Hermes 写完报告可调用）
   cli_import_kb_public.py   老站公开状态迁移 CLI（幂等，支持 --dry-run）
@@ -251,7 +267,9 @@ wiki/                       P10：编译出的 markdown 页（pages/<slug>.md + 
   api/routes/public_site.py P6：匿名只读站 /kb-public/ 与 /kb-public/reports/<path>
   web/templates/index.html  知识库页面（左导航 + 列表 + 抽屉）
   web/static/               style.css / core.js / ui.js / kb.js / icon-192.png
-  tests/                    pytest：索引/检索/状态、批量、公开外链与老站迁移、P0/P1 基础设施、wiki（50 项）
+  cli_eval.py               P11：检索评测（lexical / hybrid / hybrid+ppr 三模式）
+  tests/                    pytest：索引/检索/状态、批量、公开外链与老站迁移、P0/P1 基础设施、wiki/图谱/PPR（53 项）
+  ../verification/eval/     P11：评测集 queries.json 与基线 baseline.json
 requirements.txt            后端依赖（fastapi/uvicorn/jinja2/httpx/numpy/fastembed/onnxruntime）
 requirements-dev.txt        开发依赖（pytest）
 pytest.ini                  pytest 配置（testpaths=tests）
@@ -316,6 +334,8 @@ host 半默认反代 `127.0.0.1:8816`；如需临时指向其它端口，可设
 | `KB_WIKI_DIR` | `<插件根>/wiki` | P10：wiki markdown 输出目录（可指向 Obsidian vault 子目录） |
 | `KB_WIKI_AUTO` | `1` | 同步后是否自动增量编译 wiki |
 | `KB_WIKI_MIN_REPORTS` / `KB_WIKI_MAX_PAGES` | `2` / `400` | 实体至少出现在几篇报告才建页 / 单次最多建多少页 |
+| `KB_WIKI_TOPIC_MIN_REPORTS` | `5` | P11：标签覆盖 ≥N 篇报告才建主题页 |
+| `KB_HYBRID_WEIGHT_PPR` | `0.15` | P11：PPR 第三路召回的加分权重（0 关闭；评测依据见下） |
 
 删除 `KB_DATA_DIR/kb.sqlite` 即可重建索引（已读/收藏状态会一并清空，属预期）。
 
@@ -363,7 +383,8 @@ iframe 内使用 `/kb/` 这一套。
 ```bash
 # 单元/接口测试（自带临时 reports + 临时索引库，不碰生产数据）
 cd /root/workspace/plugins/dsh-kb/server
-../.venv/bin/python -m pytest        # 50 passed
+../.venv/bin/python -m pytest        # 53 passed
+../.venv/bin/python -m app.cli_eval  # 检索评测（lexical / hybrid / hybrid+ppr）
 
 # 端到端验收
 cd /root/workspace/plugins/dsh-kb/verification
@@ -371,9 +392,9 @@ node verify-app.mjs      # 后端 + 页面端到端（Playwright 直连 http://1
 node verify-proxy.mjs    # host 半（lib/index.js）隔离验收，不需要装进 DSH
 ```
 
-最近一次结果（2026-11-17，知识图谱 + Wiki 上线后）：
+最近一次结果（2026-11-17，图谱/主题页/PPR/评测集上线后）：
 
-- `pytest` **50 passed** —— 索引同步与分类/系列/日期派生、列表筛选（分类/系列/日期区间/
+- `pytest` **53 passed** —— 索引同步与分类/系列/日期派生、列表筛选（分类/系列/日期区间/
   半开区间/分页/排序）、标题与正文检索（snippet/match）、详情 preview、已读/收藏往返、
   非法路径 400、批量读写、筛选态树计数、公开外链（外链生成、匿名 200、内链改写、附件白名单、
   目录页、越权 404、取消公开立即生效、老站公开状态迁移）、P0/P1（指纹缓存、gzip、
@@ -449,6 +470,37 @@ basic-memory 等 11 个实现后，结论是本项目的缺口不在 RAG 引擎�
 **已知取舍**：页正文目前是确定性模板（AI 润色字段 `generated_by/model` 已预留）；
 别名归并只按「空白/大小写」折叠，`Mojang` 与 `Mojang Studios` 仍会各建一页（
 后续用 `tag_aliases` 同款机制合并）；实体关系表（`entity_edges`）与主题页按清单排在 P11。
+
+## 图谱第三路召回与检索评测（P11）
+
+**实体边 `entity_edges`**：`(source_slug, target_slug, kind='cooccur', weight)`，按 slug 字典序
+存无向边，`weight` = 两实体共同出现在多少篇报告里；编译时与 wiki 页同一事务整体替换
+（避免二次连接 `database is locked`）。图 = 互链 + 共现边，用于 PPR 与后续主题视图。
+
+**主题页**：标签 → `topic-*` 页。实体页回答「这个东西是什么」，主题页回答「这批报告围绕什么」；
+两节都进向量索引，因此语义检索能命中「A股收盘」「半导体」这类聚合入口。
+
+**PPR 第三路召回**（为什么不是「重排」）：
+1. 先按 `0.62·余弦 + 0.38·词法` 排序，取 top8 的报告作为种子；
+2. 种子报告的所有来源页（含主题页）为种子跑 PPR（`damping=0.85`，20 轮）；
+3. 页质量摊回报告时除以**该页覆盖的报告数**——否则「我的持仓」这类提到几十只股票的长报告
+   会永远排第一；归一化后 `score + weight × boost`，weight 默认 0.15；
+4. 任何异常静默放弃（图是加分项，不能影响主检索）。
+
+**评测依据**（16 条 query，gold 正则匹配 title+path，生产库 474 篇）：
+
+| 模式 | Recall@5 | MRR@10 |
+| --- | --- | --- |
+| lexical（拆词 LIKE） | 0.625 | 0.583 |
+| hybrid（语义+词法） | 0.812 | 0.627 |
+| hybrid + PPR 0.08 | 0.812 | 0.719 |
+| hybrid + PPR 0.12 | 0.812 | 0.749 |
+| **hybrid + PPR 0.15（默认）** | **0.812** | **0.790** |
+| hybrid + PPR 0.18 | 0.812 | 0.757 |
+| hybrid + PPR 0.25 | 0.812 | 0.646 |
+
+weight=0.15 相对 hybrid MRR +26%，Recall 不掉；再高会开始伤害（Alpha 版本记录 query 掉出前 10）。
+逐条名次与退化 case 存在 `verification/eval/baseline.json`，改检索逻辑前后各跑一次即可对比。
 
 ## 数据模型（v0.3）
 

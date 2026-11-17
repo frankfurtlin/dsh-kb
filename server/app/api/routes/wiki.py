@@ -159,18 +159,24 @@ def _shell(title: str, body: str, prefix: str) -> str:
 @router.get("/wiki/", response_class=HTMLResponse)
 @router.get("/wiki", response_class=HTMLResponse)
 def wiki_index_html(request: Request):
-    pages = kb_wiki.page_list(limit=200)["items"]
+    pages = kb_wiki.page_list(limit=400)["items"]
     stats = kb_wiki.stats()
-    items = "".join(
-        f'<li><a href="{_prefix(request)}/wiki/{item["slug"]}">{html.escape(item["title"])}</a>'
-        f' <span class="muted">{html.escape(item["entity_type"])} · {item["report_count"]} 篇</span></li>'
-        for item in pages
-    )
+
+    def _list(kind: str) -> str:
+        entries = [item for item in pages if item["kind"] == kind]
+        return "".join(
+            f'<li><a href="{_prefix(request)}/wiki/{item["slug"]}">{html.escape(item["title"])}</a>'
+            f' <span class="muted">{html.escape(item["entity_type"] or "")} · {item["report_count"]} 篇</span></li>'
+            for item in entries
+        ) or "<li>暂无页面</li>"
+
     body = (
-        f"<h1>知识库 Wiki</h1><blockquote>{stats['pages']} 页 · "
-        f"{stats['sources']} 条报告引用 · {stats['links']} 条互链</blockquote>"
-        f"<h2>实体页（按提及报告数排序）</h2><ul>{items or '<li>暂无页面</li>'}</ul>"
-        "<p class=\"muted\">页面由 <code>reports/</code> 的 AI 实体自动编译；"
+        f"<h1>知识库 Wiki</h1><blockquote>{stats.get('entities', 0)} 个实体页 · "
+        f"{stats.get('topics', 0)} 个主题页 · {stats['sources']} 条报告引用 · "
+        f"{stats['links']} 条互链 · {stats.get('edges', 0)} 条共现边</blockquote>"
+        f"<h2>实体页（按提及报告数排序）</h2><ul>{_list('entity')}</ul>"
+        f"<h2>主题页（按标签覆盖报告数排序）</h2><ul>{_list('topic')}</ul>"
+        "<p class=\"muted\">页面由 <code>reports/</code> 的 AI 实体与标签自动编译；"
         "重新编译见 <code>POST /api/wiki/compile</code>。</p>"
     )
     return HTMLResponse(_shell("Wiki 索引", body, _prefix(request)))

@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "description": "知识库检索评测集：query + gold 正则（匹配 title+path）",
+  "queries": [
+    {
+      "id": "q01",
+      "query": "A股 市场全景 收盘",
+      "gold": "A股市场全景分析报告",
+      "note": "跨日期检索行情综述（语义相似但日期不同）"
+    },
+    {
+      "id": "q02",
+      "query": "铝业 资产负债率",
+      "gold": "中国铝业",
+      "note": "个股财务指标"
+    },
+    {
+      "id": "q03",
+      "query": "半导体 资金流向",
+      "gold": "A股市场全景分析报告",
+      "note": "板块+资金面"
+    },
+    {
+      "id": "q04",
+      "query": "Minecraft Alpha 版本记录",
+      "gold": "Alpha",
+      "note": "版本记录类，标题关键词"
+    },
+    {
+      "id": "q05",
+      "query": "Indev 版本 方块",
+      "gold": "Indev",
+      "note": "早期版本记录"
+    },
+    {
+      "id": "q06",
+      "query": "小红书 爆款笔记 写作",
+      "gold": "小红书|Kenney",
+      "note": "话题精读"
+    },
+    {
+      "id": "q07",
+      "query": "荒天帝 动态壁纸",
+      "gold": "荒天帝",
+      "note": "影像收录"
+    },
+    {
+      "id": "q08",
+      "query": "深证成指 创业板指",
+      "gold": "A股市场全景分析报告",
+      "note": "指数组合"
+    },
+    {
+      "id": "q09",
+      "query": "紫金矿业 铜价",
+      "gold": "紫金矿业",
+      "note": "个股"
+    },
+    {
+      "id": "q10",
+      "query": "期指贴水 资金",
+      "gold": "A股市场全景分析报告",
+      "note": "衍生品与资金面"
+    },
+    {
+      "id": "q11",
+      "query": "Anthropic Agent 记忆",
+      "gold": "Anthropic|Agent",
+      "note": "技术长文"
+    },
+    {
+      "id": "q12",
+      "query": "松山湖 影像",
+      "gold": "松山湖",
+      "note": "旅行影像"
+    },
+    {
+      "id": "q13",
+      "query": "Minecraft Beta 版本 发布",
+      "gold": "Beta",
+      "note": "版本记录（关键词精确命中）"
+    },
+    {
+      "id": "q14",
+      "query": "Minecraft Java版 1.0 发布",
+      "gold": "1\\.0",
+      "note": "版本记录（正则匹配 1.0.x）"
+    },
+    {
+      "id": "q15",
+      "query": "旅行 影像册",
+      "gold": "影像册",
+      "note": "分类入口"
+    },
+    {
+      "id": "q16",
+      "query": "恒生科技 港股",
+      "gold": "港股|恒生",
+      "note": "跨市场"
+    }
+  ]
+}

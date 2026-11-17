@@ -124,6 +124,19 @@ CREATE TABLE IF NOT EXISTS wiki_source (
 );
 CREATE INDEX IF NOT EXISTS idx_wiki_source_path ON wiki_source(path);
 
+-- P11：实体共现边（多行关系）。weight = 同篇报告共同出现的篇数；
+-- 无向边按 (source_slug < target_slug) 规范化，kind 预留 cooccur/related/manual。
+CREATE TABLE IF NOT EXISTS entity_edges (
+    source_slug TEXT NOT NULL,
+    target_slug TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'cooccur',
+    weight INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (source_slug, target_slug, kind)
+);
+CREATE INDEX IF NOT EXISTS idx_entity_edges_source ON entity_edges(source_slug);
+CREATE INDEX IF NOT EXISTS idx_entity_edges_target ON entity_edges(target_slug);
+
 -- 增量编译台账：hash 命中即跳过，失败可重试。
 CREATE TABLE IF NOT EXISTS compile_job (
     report_path TEXT NOT NULL,
@@ -1390,6 +1403,7 @@ def hybrid_search(
     semantic_weight: float = 0.62,
     lexical_weight: float = 0.38,
     include_wiki: bool = True,
+    ppr_weight: float = 0.0,
 ) -> tuple[list[dict], int]:
     """语义 + 词法混合检索；返回 (items, total)。
 
@@ -1431,6 +1445,24 @@ def hybrid_search(
         if score <= 0.05:
             continue
         scored.append((score, similarity, match, row))
+    # P11：图上的第三路召回——以当前 top 报告为种子在 wiki 页图上跑 PPR，
+    # 把页质量摊回报告后作为小幅提升项（默认权重由 HYBRID_WEIGHT_PPR 控制）。
+    if keyword and ppr_weight > 0 and scored:
+        try:
+            top_paths = [
+                row["path"]
+                for _, _, _, row in sorted(scored, key=lambda entry: -entry[0])[:8]
+                if not isinstance(row, dict)
+            ]
+            boost = ppr_report_boost(top_paths)
+            if boost:
+                scored = [
+                    (score + ppr_weight * boost.get(row["path"], 0.0), similarity, match, row)
+                    for score, similarity, match, row in scored
+                ]
+        except Exception:  # 图检索失败不能影响主检索
+            pass
+
     # wiki 页作为「单实体文档」参与同一排序；有分类/系列/日期筛选时先不混入，
     # 避免把浏览视图（按分类翻报告）变成混合列表。
     filtered = bool(category or series or date_from or date_to or view != "all")
@@ -1592,3 +1624,146 @@ def _wiki_candidates(keyword: str, query_vector, *, model: str,
         }
         out.append((score, similarity, match, item))
     return out
+
+
+# ---------- P11：实体图（共现边 + PPR 第三路召回） ----------
+
+_GRAPH_CACHE: dict = {"at": 0.0, "adj": None, "pages": None}
+
+
+def invalidate_graph_cache() -> None:
+    _GRAPH_CACHE["at"] = 0.0
+    _GRAPH_CACHE["adj"] = None
+    _GRAPH_CACHE["pages"] = None
+
+
+def replace_entity_edges(edges, *, conn: sqlite3.Connection | None = None) -> int:
+    """整表替换共现边。edges 为 (slug_a, slug_b, weight) 迭代；自动做无向规范化。
+
+    传入 conn 时复用调用方事务（wiki 编译期间正持有同一连接的写事务）。
+    """
+    rows = []
+    for a, b, weight in edges:
+        if not a or not b or a == b or int(weight) <= 0:
+            continue
+        left, right = (a, b) if a < b else (b, a)
+        rows.append((left, right, int(weight), _now()))
+    own = conn is None
+    connection = _connect() if own else conn
+    try:
+        connection.execute("DELETE FROM entity_edges")
+        connection.executemany(
+            "INSERT OR REPLACE INTO entity_edges (source_slug, target_slug, kind, weight, updated_at)"
+            " VALUES (?, ?, 'cooccur', ?, ?)",
+            rows,
+        )
+        if own:
+            connection.commit()
+    finally:
+        if own:
+            connection.close()
+    invalidate_graph_cache()
+    return len(rows)
+
+
+def _graph() -> tuple[dict[str, dict[str, float]], list[str]]:
+    """页级无向图（wiki_link 权重 1 + 实体共现边权重 min(weight,5)），带 30s 缓存。"""
+    now = time.time()
+    if _GRAPH_CACHE["adj"] is not None and now - _GRAPH_CACHE["at"] < 30:
+        return _GRAPH_CACHE["adj"], _GRAPH_CACHE["pages"]
+    conn = _connect()
+    try:
+        pages = [row["slug"] for row in conn.execute(
+            "SELECT slug FROM wiki_page WHERE state = 'live'"
+        )]
+        id_to_slug = {
+            row["id"]: row["slug"]
+            for row in conn.execute("SELECT id, slug FROM wiki_page WHERE state = 'live'")
+        }
+        adj: dict[str, dict[str, float]] = {slug: {} for slug in pages}
+        for row in conn.execute("SELECT page_id, target_slug FROM wiki_link"):
+            source = id_to_slug.get(row["page_id"])
+            target = row["target_slug"]
+            if source and target in adj:
+                adj[source][target] = max(adj[source].get(target, 0.0), 1.0)
+                adj[target][source] = max(adj[target].get(source, 0.0), 1.0)
+        for row in conn.execute("SELECT source_slug, target_slug, weight FROM entity_edges"):
+            source, target = row["source_slug"], row["target_slug"]
+            if source in adj and target in adj:
+                weight = float(min(int(row["weight"]), 5))
+                merged = max(adj[source].get(target, 0.0), weight)
+                adj[source][target] = merged
+                adj[target][source] = max(adj[target].get(source, 0.0), merged)
+    finally:
+        conn.close()
+    _GRAPH_CACHE.update({"at": now, "adj": adj, "pages": pages})
+    return adj, pages
+
+
+def personalized_pagerank(
+    seed_slugs=None,
+    *,
+    damping: float = 0.85,
+    iterations: int = 20,
+) -> dict[str, float]:
+    """在 wiki 页图上跑 Personalized PageRank；seed_slugs 为空时用均匀分布。"""
+    adj, pages = _graph()
+    if not pages:
+        return {}
+    seeds = [slug for slug in (seed_slugs or []) if slug in adj]
+    if not seeds:
+        seeds = list(pages)
+    base = 1.0 / len(seeds)
+    personal = {slug: (base if slug in seeds else 0.0) for slug in pages}
+    mass = dict(personal)
+    teleport = (1.0 - damping) / len(pages)
+    for _ in range(max(1, int(iterations))):
+        nxt = {slug: teleport + damping * personal[slug] for slug in pages}
+        for slug in pages:
+            neighbours = adj.get(slug) or {}
+            if not neighbours:
+                continue
+            total = sum(neighbours.values())
+            share = mass[slug] * damping / total
+            for target, weight in neighbours.items():
+                nxt[target] += share * weight
+        mass = nxt
+    return mass
+
+
+def ppr_report_boost(seed_paths, keyword_slugs=()) -> dict[str, float]:
+    """把页级 PPR 质量摊回报告：返回 {path: 0..1}（归一化后的提升分）。"""
+    if not seed_paths and not keyword_slugs:
+        return {}
+    conn = _connect()
+    try:
+        seeds = {slug for slug in keyword_slugs if slug}
+        for path in seed_paths or ():
+            for row in conn.execute(
+                "SELECT p.slug FROM wiki_source s JOIN wiki_page p ON p.id = s.page_id"
+                " WHERE s.path = ? AND p.state = 'live'",
+                (path,),
+            ):
+                seeds.add(row["slug"])
+        if not seeds:
+            return {}
+        mass = personalized_pagerank(seeds)
+        if not mass:
+            return {}
+        boost: dict[str, float] = {}
+        # 按「页覆盖的报告数」摊薄：一张 44 篇报告的主题页，对每篇只能贡献 1/44 的质量，
+        # 否则 PPR 会系统性偏向「提到很多实体的长报告」。
+        for row in conn.execute(
+            "SELECT p.slug, p.report_count, s.path FROM wiki_source s JOIN wiki_page p ON p.id = s.page_id"
+            " WHERE p.state = 'live'"
+        ):
+            weight = mass.get(row["slug"], 0.0)
+            if weight:
+                share = max(1, int(row["report_count"] or 1))
+                boost[row["path"]] = boost.get(row["path"], 0.0) + weight / share
+    finally:
+        conn.close()
+    peak = max(boost.values()) if boost else 0.0
+    if peak <= 0:
+        return {}
+    return {path: value / peak for path, value in boost.items()}
