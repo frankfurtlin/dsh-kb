@@ -22,6 +22,8 @@ import numpy as np
 from app.config import DATA_DIR, INDEX_FILE
 from app.services import kb_index
 
+CLASSIFY_VERSION = 1  # AI 分类提示词/规则版本：升级会让所有报告重新分类
+
 _BODY_LIMIT = 20000
 _SUMMARY_LIMIT = 180
 _SNIPPET_LIMIT = 160
@@ -107,6 +109,18 @@ META_COLUMNS = {
     "ai_model": "TEXT NOT NULL DEFAULT ''",
 }
 
+# R1：AI 分类（规则值保留在 *_rule，AI 值在 *_ai，category/series 是生效值）。
+CLASSIFY_COLUMNS = {
+    "category_rule": "TEXT NOT NULL DEFAULT ''",
+    "series_rule": "TEXT NOT NULL DEFAULT ''",
+    "category_ai": "TEXT NOT NULL DEFAULT ''",
+    "series_ai": "TEXT NOT NULL DEFAULT ''",
+    "classify_version": "INTEGER NOT NULL DEFAULT 0",
+    "classify_at": "TEXT NOT NULL DEFAULT ''",
+    "classify_model": "TEXT NOT NULL DEFAULT ''",
+    "classify_error": "TEXT NOT NULL DEFAULT ''",
+}
+
 AI_COLUMNS = {
     "summary_ai": "TEXT NOT NULL DEFAULT ''",
     "key_points": "TEXT NOT NULL DEFAULT '[]'",
@@ -141,7 +155,13 @@ def _connect() -> sqlite3.Connection:
 def _ensure_columns(conn: sqlite3.Connection) -> None:
     """给旧索引库补齐 P1 新增的 AI 列（幂等）。"""
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(reports)")}
-    for column, definition in {**AI_COLUMNS, **EMBED_COLUMNS, **PUBLIC_COLUMNS, **META_COLUMNS}.items():
+    for column, definition in {
+        **AI_COLUMNS,
+        **EMBED_COLUMNS,
+        **PUBLIC_COLUMNS,
+        **META_COLUMNS,
+        **CLASSIFY_COLUMNS,
+    }.items():
         if column not in existing:
             conn.execute(f"ALTER TABLE reports ADD COLUMN {column} {definition}")
     conn.commit()
@@ -234,6 +254,8 @@ def _backfill_meta(conn: sqlite3.Connection) -> None:
         )
         conn.execute("UPDATE reports SET created_at = ? WHERE created_at = ''", (_now(),))
     conn.execute("UPDATE reports SET updated_at = created_at WHERE updated_at = ''")
+    conn.execute("UPDATE reports SET category_rule = category WHERE category_rule = ''")
+    conn.execute("UPDATE reports SET series_rule = series WHERE series_rule = ''")
     links = conn.execute("SELECT COUNT(*) AS n FROM report_tags").fetchone()["n"]
     tagged = conn.execute(
         "SELECT COUNT(*) AS n FROM reports WHERE tags != '' AND tags != '[]'"
@@ -274,7 +296,16 @@ def _extract_text(path: Path) -> tuple[str, str]:
 
 
 def sync(force: bool = False) -> dict:
-    """把扫描结果增量同步进索引库；返回 {indexed, removed, total}。"""
+    """把扫描结果增量同步进索引库；返回 {indexed, removed, total}。
+
+    变更判定分两类，避免把「AI 改过分类」误判成文件变化：
+
+    - 内容变化（size/mtime）：重读正文，旧 AI sidecar 与 AI 分类全部失效并回落规则值；
+    - 元数据变化（标题/日期/规则分类/系列）：只更新规则基线与展示字段，AI 结论保留。
+
+    之前这里直接比较生效列 `category/series`，AI 分类写回后每次同步都会被当成
+    「规则变了」而清空 AI 结果，R1 联调时踩过，回归用例见 tests/test_classify.py。
+    """
     global _indexed_at
     items = kb_index.cached_scan(force=force)
     incoming = {item["path"]: item for item in items}
@@ -284,76 +315,124 @@ def sync(force: bool = False) -> dict:
         try:
             existing = {
                 row["path"]: row
-                for row in conn.execute("SELECT path, size, mtime, title, category, series, date FROM reports")
+                for row in conn.execute(
+                    "SELECT path, size, mtime, title, category, series, category_rule, series_rule, date"
+                    " FROM reports"
+                )
             }
             changed: list[str] = []
             now = _now()
             for path, item in incoming.items():
                 stat_key = (int(item["size"]), int(item["mtime"]))
                 row = existing.get(path)
-                if row is not None and (row["size"], row["mtime"]) == stat_key and (
-                    row["title"],
-                    row["category"],
-                    row["series"],
-                    row["date"],
-                ) == (item["title"], item["category"], item["series"], item["date"]):
-                    continue
-                summary, body = _extract_text(kb_index.REPORTS_DIR / path)
-                cursor = conn.execute(
-                    """
-                    INSERT INTO reports
-                        (path, title, category, series, date, size, mtime, summary, body,
-                         created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(path) DO UPDATE SET
-                        title=excluded.title, category=excluded.category, series=excluded.series,
-                        date=excluded.date, size=excluded.size, mtime=excluded.mtime,
-                        summary=excluded.summary, body=excluded.body,
-                        updated_at=excluded.updated_at,
-                        -- 正文变化后旧的 AI sidecar 立即失效，等待重新抽取。
-                        summary_ai='', key_points='[]', entities='[]', tags='[]',
-                        ai_version=0, ai_at='', ai_error=''
-                    """,
-                    (
-                        path,
-                        item["title"],
-                        item["category"],
-                        item["series"],
-                        item["date"],
-                        stat_key[0],
-                        stat_key[1],
-                        summary,
-                        body,
-                        now,
-                        now,
-                    ),
+                content_changed = row is None or (row["size"], row["mtime"]) != stat_key
+                rules_changed = row is not None and (
+                    (row["category_rule"] or ""),
+                    (row["series_rule"] or ""),
+                ) != (item["category"], item["series"])
+                meta_changed = row is not None and (
+                    (row["title"], row["date"]) != (item["title"], item["date"]) or rules_changed
                 )
-                if cursor.rowcount:
-                    indexed += 1
-                    changed.append(path)
-                    if row is None:
-                        _record_event(
-                            conn,
+                if not content_changed and not meta_changed:
+                    continue
+
+                if content_changed:
+                    summary, body = _extract_text(kb_index.REPORTS_DIR / path)
+                    conn.execute(
+                        """
+                        INSERT INTO reports
+                            (path, title, category, series, category_rule, series_rule,
+                             date, size, mtime, summary, body, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(path) DO UPDATE SET
+                            title=excluded.title,
+                            date=excluded.date, size=excluded.size, mtime=excluded.mtime,
+                            summary=excluded.summary, body=excluded.body,
+                            category_rule=excluded.category_rule,
+                            series_rule=excluded.series_rule,
+                            -- 正文变化 → AI 分类失效，生效值回落规则值。
+                            category=excluded.category_rule,
+                            series=excluded.series_rule,
+                            updated_at=excluded.updated_at,
+                            summary_ai='', key_points='[]', entities='[]', tags='[]',
+                            ai_version=0, ai_at='', ai_error='',
+                            category_ai='', series_ai='',
+                            classify_version=0, classify_at='', classify_error=''
+                        """,
+                        (
                             path,
-                            "ingest",
-                            {
-                                "title": item["title"],
-                                "category": item["category"],
-                                "series": item["series"],
-                                "date": item["date"],
-                            },
-                        )
-                    elif (row["category"], row["series"]) != (item["category"], item["series"]):
+                            item["title"],
+                            item["category"],
+                            item["series"],
+                            item["category"],
+                            item["series"],
+                            item["date"],
+                            stat_key[0],
+                            stat_key[1],
+                            summary,
+                            body,
+                            now,
+                            now,
+                        ),
+                    )
+                else:
+                    # 元数据变化：AI 结论仍在，生效值优先用 AI 结论。
+                    conn.execute(
+                        """
+                        UPDATE reports SET
+                            title=?, date=?, category_rule=?, series_rule=?,
+                            category=CASE WHEN category_ai != '' THEN category_ai ELSE ? END,
+                            series=CASE WHEN category_ai != '' THEN series_ai ELSE ? END,
+                            updated_at=?
+                        WHERE path=?
+                        """,
+                        (
+                            item["title"],
+                            item["date"],
+                            item["category"],
+                            item["series"],
+                            item["category"],
+                            item["series"],
+                            now,
+                            path,
+                        ),
+                    )
+                changed.append(path)
+                if row is None:
+                    _record_event(
+                        conn,
+                        path,
+                        "ingest",
+                        {
+                            "title": item["title"],
+                            "category": item["category"],
+                            "series": item["series"],
+                            "date": item["date"],
+                        },
+                    )
+                    indexed += 1
+                else:
+                    refreshed = conn.execute(
+                        "SELECT category, series FROM reports WHERE path=?", (path,)
+                    ).fetchone()
+                    if (row["category"], row["series"]) != (
+                        refreshed["category"] if refreshed else item["category"],
+                        refreshed["series"] if refreshed else item["series"],
+                    ):
                         _record_event(
                             conn,
                             path,
                             "reclassify",
                             {
                                 "from": {"category": row["category"], "series": row["series"]},
-                                "to": {"category": item["category"], "series": item["series"]},
+                                "to": {
+                                    "category": refreshed["category"] if refreshed else item["category"],
+                                    "series": refreshed["series"] if refreshed else item["series"],
+                                },
                                 "source": "rule",
                             },
                         )
+                    indexed += 1
             removed_paths: list[str] = []
             for path in existing.keys() - incoming.keys():
                 _record_event(conn, path, "remove", {"reason": "file-missing"})
@@ -418,6 +497,15 @@ def _row_to_item(row: sqlite3.Row) -> dict:
         "ai_at": row["ai_at"] or "",
         "ai_error": row["ai_error"] or "",
         "ai_model": row["ai_model"] or "",
+        # R1：规则值 / AI 值 / 当前生效值（category、series 是生效值）。
+        "category_rule": row["category_rule"] or "",
+        "series_rule": row["series_rule"] or "",
+        "category_ai": row["category_ai"] or "",
+        "series_ai": row["series_ai"] or "",
+        "classify_version": row["classify_version"] or 0,
+        "classify_at": row["classify_at"] or "",
+        "classify_model": row["classify_model"] or "",
+        "classify_error": row["classify_error"] or "",
         # P2：是否已有语义向量（前端可据此显示「语义可检索」状态）。
         "has_embedding": bool(row["embedding"]),
         # P6：是否已公开（可被匿名只读访问）。
@@ -920,6 +1008,104 @@ def set_ai_error(path: str, message: str) -> None:
             (str(message)[:300], _now(), _now(), path),
         )
         _record_event(conn, path, "ai_error", {"error": str(message)[:300]})
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ---------- R1：AI 分类 ----------
+
+
+def classify_stats() -> dict:
+    """AI 分类进度。"""
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS total,"
+            " SUM(CASE WHEN classify_version >= ? THEN 1 ELSE 0 END) AS classified,"
+            " SUM(CASE WHEN classify_version < ? AND classify_error != '' THEN 1 ELSE 0 END) AS failed"
+            " FROM reports",
+            (CLASSIFY_VERSION, CLASSIFY_VERSION),
+        ).fetchone()
+    finally:
+        conn.close()
+    total = int(row["total"] or 0)
+    classified = int(row["classified"] or 0)
+    failed = int(row["failed"] or 0)
+    return {
+        "total": total,
+        "classified": classified,
+        "failed": failed,
+        "pending": max(0, total - classified - failed),
+        "version": CLASSIFY_VERSION,
+    }
+
+
+def next_pending_classify(limit: int = 3, *, include_failed: bool = False) -> list[dict]:
+    """取一批待分类报告；给模型只需标题/日期/规则分类/标签/摘要，不用全文。"""
+    if limit <= 0:
+        return []
+    clause = "classify_version < ?" + ("" if include_failed else " AND classify_error = ''")
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT path, title, date, category, series, category_rule, series_rule,"
+            " tags, summary_ai, summary FROM reports"
+            f" WHERE {clause} ORDER BY classify_at ASC, mtime DESC LIMIT ?",
+            [CLASSIFY_VERSION, int(limit)],
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(row) for row in rows]
+
+
+def set_classify(path: str, payload: dict, model: str = "") -> dict | None:
+    """写入 AI 分类并把 category/series 切到生效值（人工覆盖尚未实现，AI 优先于规则）。"""
+    from app.services import kb_index
+
+    category = str(payload.get("category") or "").strip()
+    if category not in kb_index.CATEGORIES:
+        raise ValueError(f"分类不在允许枚举内：{category!r}")
+    series = " ".join(str(payload.get("series") or "").split())[:40]
+    reason = " ".join(str(payload.get("reason") or "").split())[:60]
+    now = _now()
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT category, series FROM reports WHERE path = ?", (path,)
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute(
+            "UPDATE reports SET category = ?, series = ?, category_ai = ?, series_ai = ?,"
+            " classify_version = ?, classify_at = ?, classify_model = ?, classify_error = '',"
+            " updated_at = ? WHERE path = ?",
+            (category, series, category, series, CLASSIFY_VERSION, now, str(model or "")[:120], now, path),
+        )
+        before = {"category": row["category"], "series": row["series"]}
+        after = {"category": category, "series": series}
+        if before != after:
+            _record_event(
+                conn,
+                path,
+                "classify",
+                {"from": before, "to": after, "reason": reason, "source": "ai"},
+                model=model,
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"path": path, "category": category, "series": series}
+
+
+def set_classify_error(path: str, message: str) -> None:
+    conn = _connect()
+    try:
+        conn.execute(
+            "UPDATE reports SET classify_error = ?, classify_at = ?, updated_at = ? WHERE path = ?",
+            (str(message)[:300], _now(), _now(), path),
+        )
+        _record_event(conn, path, "classify_error", {"error": str(message)[:300]})
         conn.commit()
     finally:
         conn.close()

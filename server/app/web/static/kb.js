@@ -727,7 +727,12 @@ function kbFillDrawer(item, detail) {
   var actions = kbEl('kb-drawer-actions');
   var body = kbEl('kb-drawer-body');
   if (kicker) {
-    kicker.innerHTML = '<span class="kb-badge kb-badge-' + kbCatSlug(item.category) + '">' +
+    var byAi = !!item.category_ai;
+    var kickerTitle = byAi ? 'AI 分类' : '规则分类';
+    if (byAi && item.category_rule && item.category_rule !== item.category_ai) {
+      kickerTitle += '（规则原判为 ' + item.category_rule + '）';
+    }
+    kicker.innerHTML = '<span class="kb-badge kb-badge-' + kbCatSlug(item.category) + '" title="' + escAttr(kickerTitle) + '">' +
       esc(item.category) + '</span>' + (item.series ? '<span class="kb-item-series">' + esc(item.series) + '</span>' : '');
   }
   if (title) title.textContent = item.title;
@@ -741,6 +746,7 @@ function kbFillDrawer(item, detail) {
       metaParts.push('<span title="最近一次索引更新">更新 ' + kbFmtDate(String(item.updated_at).slice(0, 10)) + '</span>');
     }
     if (item.ai_model) metaParts.push('<span title="生成 AI 摘要所用模型">模型 ' + esc(item.ai_model) + '</span>');
+    if (item.category_ai) metaParts.push('<span title="AI 分类与二级系列">分类 AI</span>');
     meta.innerHTML = metaParts.join('');
   }
   var source = detail || item;

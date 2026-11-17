@@ -24,6 +24,19 @@ _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 _DATE_DIR_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})/")
 _CATEGORY_RE = re.compile(r"<!--\s*bl:category:\s*([^>-]+?)\s*-->")
 # 分类规则：顺序敏感，先命中先得。标题与相对路径都参与匹配（沿用原站规则）。
+# 允许的分类枚举（AI 分类与人工覆盖都只能落在这里）。
+CATEGORIES = (
+    "Minecraft 版本",
+    "市场全景",
+    "话题精读",
+    "策略研究",
+    "个股分析",
+    "旅行影像",
+    "影像收录",
+    "技术演示",
+    "其他",
+)
+
 _CATEGORY_RULES = (
     ("Minecraft 版本", lambda title, rel: "mc-versions" in rel),
     ("市场全景", lambda title, rel: "市场全景" in title or "全景" in title),

@@ -34,7 +34,7 @@ from app.api.routes import pages as page_routes
 from app.api.routes import public_site as public_routes
 from app.api.routes import reports as report_routes
 from app.config import ROUTE_PREFIX, STATIC_DIR
-from app.services import kb_ai, kb_embed, kb_enrich, kb_search, kb_store
+from app.services import kb_ai, kb_classify, kb_embed, kb_enrich, kb_search, kb_store
 
 logger = logging.getLogger("dsh-kb")
 
@@ -53,6 +53,22 @@ def _enrich_worker(stop_event: threading.Event) -> None:
                 )
         except Exception:  # 后台线程不能把服务带崩
             logger.warning("AI sidecar 后台补全异常", exc_info=True)
+
+
+def _classify_worker(stop_event: threading.Event) -> None:
+    """低频后台补分类：每轮取一小批 pending，失败记录后跳过，下一轮重试。"""
+    while not stop_event.wait(config.CLASSIFY_INTERVAL):
+        try:
+            result = kb_classify.classify_pending(limit=config.CLASSIFY_BATCH)
+            if result.get("ok") and (result.get("classified") or result.get("failed")):
+                logger.info(
+                    "AI 分类：本批 %s 篇，失败 %s，剩余 %s",
+                    result.get("classified"),
+                    result.get("failed"),
+                    result.get("remaining"),
+                )
+        except Exception as exc:  # 后台线程不因单次失败退出
+            logger.warning("AI 分类批次失败：%s", exc)
 
 
 def _embed_worker(stop_event: threading.Event) -> None:
@@ -86,6 +102,17 @@ async def lifespan(_app: FastAPI):
         worker.start()
         workers.append(worker)
         logger.info("AI sidecar 后台补全已启动（每 %.0fs 处理 %s 篇）", config.AI_INTERVAL, config.AI_BATCH)
+    if config.CLASSIFY_AUTO and kb_ai.is_configured():
+        classifier = threading.Thread(
+            target=_classify_worker, args=(stop_event,), name="kb-classify", daemon=True
+        )
+        classifier.start()
+        workers.append(classifier)
+        logger.info(
+            "AI 分类后台补全已启动（每 %.0fs 处理 %s 篇）",
+            config.CLASSIFY_INTERVAL,
+            config.CLASSIFY_BATCH,
+        )
     if config.EMBED_ENABLED and kb_embed.available():
         embedder = threading.Thread(target=_embed_worker, args=(stop_event,), name="kb-embed", daemon=True)
         embedder.start()

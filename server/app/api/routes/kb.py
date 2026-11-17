@@ -7,8 +7,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app import config
-from app.services import (kb_ai, kb_ask, kb_digest as kb_digest_service, kb_embed, kb_enrich,
-                          kb_public, kb_search as kb_search_service, kb_store)
+from app.services import (kb_ai, kb_ask, kb_classify, kb_digest as kb_digest_service, kb_embed,
+                          kb_enrich, kb_public, kb_search as kb_search_service, kb_store)
 
 router = APIRouter(prefix="/api")
 
@@ -228,6 +228,37 @@ def kb_enrich_reports(body: KbEnrichBody):
         return kb_enrich.enrich_report(path, force=body.force)
     limit = max(1, min(MAX_ENRICH, int(body.limit or 3)))
     return kb_enrich.enrich_pending(limit=limit, include_failed=body.retry_failed or body.force)
+
+
+# ---------- R1：AI 分类 ----------
+
+
+@router.get("/kb/classify/stats")
+def kb_classify_stats() -> dict:
+    model = kb_ai.model_label()
+    return {"configured": kb_ai.is_configured(), "model": model, **kb_store.classify_stats()}
+
+
+class KbClassifyBody(BaseModel):
+    path: str = ""
+    limit: int = 3
+    force: bool = False
+    retry_failed: bool = False
+
+
+@router.post("/kb/classify")
+def kb_classify_reports(body: KbClassifyBody):
+    """手动触发 AI 分类（单篇或小批量）；后台线程会自动补齐剩余。"""
+    if not kb_ai.is_configured():
+        return _error(503, "AI 未配置：缺少 DSH AI 桥密钥（server/.ai-secret）")
+    path = (body.path or "").strip().lstrip("/")
+    if path:
+        if ".." in path.split("/") or not path.lower().endswith((".html", ".htm")):
+            return _error(400, "无效的报告路径")
+        result = kb_classify.classify_report(path, force=body.force)
+        return {"ok": bool(result.get("ok")), **result}
+    limit = max(1, min(MAX_ENRICH, int(body.limit or 3)))
+    return kb_classify.classify_pending(limit=limit, include_failed=body.retry_failed or body.force)
 
 
 # ---------- P5：周报 / 主题聚合 ----------

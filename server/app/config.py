@@ -76,6 +76,12 @@ ROUTE_PREFIX = "/kb"
 PUBLIC_BASE_URL = (os.environ.get("KB_PUBLIC_BASE_URL", "").strip()
                    or "https://hermes.frankfurtlin.top/kb-public").rstrip("/")
 
+# ---------- R1：AI 分类 ----------
+CLASSIFY_AUTO = os.environ.get("KB_CLASSIFY_AUTO", "1").strip() not in ("0", "false", "False", "")
+CLASSIFY_BATCH = max(1, min(20, int(os.environ.get("KB_CLASSIFY_BATCH", "4") or 4)))
+CLASSIFY_INTERVAL = max(10, int(os.environ.get("KB_CLASSIFY_INTERVAL", "60") or 60))
+CLASSIFY_CONCURRENCY = max(1, min(4, int(os.environ.get("KB_CLASSIFY_CONCURRENCY", "2") or 2)))
+
 # ---------- AI（P1–P5）：模型能力由 DSH 自己的 LLM（dsh-agent 默认模型）提供 ----------
 # 后端不持有任何模型密钥：所有模型请求发到 host 插件的内部 AI 桥
 # （/kb/_internal/ai），桥再用 DSH 的默认模型完成调用并回传文本。

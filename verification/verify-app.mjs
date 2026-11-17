@@ -106,6 +106,24 @@ async function seedAi(reportPath, payload) {
   })
 }
 
+async function seedClassify(reportPath, payload) {
+  const env = { ...process.env, KB_DATA_DIR: DATA_DIR }
+  const code = [
+    'from app.services import kb_store',
+    `kb_store.set_classify(${JSON.stringify(reportPath)}, ${JSON.stringify(payload)}, model="verify-app")`,
+    'print("seeded")',
+  ].join('\n')
+  return new Promise((resolvePromise) => {
+    const child = spawn(PYTHON, ['-c', code], { cwd: SERVER_DIR, env })
+    let output = ''
+    child.stdout.on('data', (chunk) => { output += chunk.toString() })
+    child.stderr.on('data', (chunk) => { output += chunk.toString() })
+    seedLog = output
+    child.on('exit', (codeValue) => resolvePromise(codeValue === 0 && output.includes('seeded')))
+    child.on('error', () => resolvePromise(false))
+  })
+}
+
 let seedLog = ''
 
 async function main() {
@@ -193,6 +211,26 @@ async function main() {
     const metaItem = (await api('/api/kb/report/' + reportPath.split('/').map(encodeURIComponent).join('/'))).json?.item
     check('v0.3 报告带入库/索引时间与模型字段',
       !!metaItem?.created_at && !!metaItem?.updated_at && 'ai_model' in metaItem)
+
+    // ---------- R1：AI 分类（直接种进索引库，验收不依赖模型） ----------
+    const classifyStats0 = (await api('/api/kb/classify/stats')).json
+    check('R1 GET /api/kb/classify/stats 返回进度',
+      typeof classifyStats0?.total === 'number' && typeof classifyStats0?.pending === 'number' && classifyStats0?.version >= 1,
+      `pending=${classifyStats0?.pending} version=${classifyStats0?.version}`)
+    const classifySeeded = await seedClassify(reportPath, { category: '市场全景', series: 'A股市场全景（验收）', reason: '验收种入' })
+    check('R1 索引库可写入 AI 分类', classifySeeded, classifySeeded ? '' : seedLog.slice(-300))
+    const classifyStats1 = (await api('/api/kb/classify/stats')).json
+    check('R1 分类进度随写入推进', classifyStats1?.classified === 1 && classifyStats1?.pending === classifyStats0?.pending - 1,
+      `classified=${classifyStats1?.classified} pending=${classifyStats1?.pending}`)
+    const classifiedItem = (await api('/api/kb/report/' + reportPath.split('/').map(encodeURIComponent).join('/'))).json?.item
+    check('R1 报告返回分类来源字段',
+      classifiedItem?.category_ai === '市场全景' && classifiedItem?.category_rule === '市场全景' &&
+      classifiedItem?.series_ai === 'A股市场全景（验收）' && classifiedItem?.classify_version >= 1,
+      `ai=${classifiedItem?.category_ai} rule=${classifiedItem?.category_rule}`)
+    const classifyEvents = (await api('/api/kb/events?path=' + encodeURIComponent(reportPath))).json?.events || []
+    check('R1 分类写入留下 classify 事件',
+      classifyEvents.some((event) => event.kind === 'classify' && event.payload?.source === 'ai'),
+      classifyEvents.slice(0, 2).map((event) => event.kind).join(','))
 
     // ---------- P2/P3/P5：向量/问答/周报接口（临时后端无模型，验证降级路径） ----------
     const embedStats = await api('/api/kb/embed/stats')
@@ -390,7 +428,12 @@ async function main() {
     await page.click('.kb-item-open >> nth=0')
     await page.waitForSelector('#kb-drawer:not(.bl-hidden)')
     await page.waitForTimeout(600)
-    check('抽屉打开并显示标题', (await page.locator('#kb-drawer-title').innerText()).trim() === cardTitle)
+    const drawerTitle = (await page.locator('#kb-drawer-title').innerText()).trim()
+    const drawerMeta = await page.locator('#kb-drawer-meta').innerText()
+    check('抽屉打开并显示标题', drawerTitle === cardTitle,
+      `drawer=${drawerTitle.slice(0, 24)} card=${cardTitle.slice(0, 24)}`)
+    const kickerTitle = await page.locator('#kb-drawer-kicker .kb-badge').getAttribute('title')
+    check('抽屉分类徽章标注来源（AI/规则）', /AI 分类|规则分类/.test(kickerTitle || ''), `title=${kickerTitle}`)
     const drawerText = await page.locator('#kb-drawer-body').innerText()
     check('抽屉展示正文摘要（preview）', drawerText.length > 60, `len=${drawerText.length}`)
     check('抽屉「打开原文」链接指向相对路径',

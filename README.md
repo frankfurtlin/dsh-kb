@@ -23,7 +23,7 @@ SQLite 索引库（摘要/正文缓存 + 已读/收藏 + 公开标记 + AI sidec
 
 | # | 目标 | 含义 | 现状 |
 |---|---|---|---|
-| G1 | 自动分类 | 报告进来就归到合理的分类/系列，不需要人工建文件夹、改名 | 规则推导 + HTML 覆盖，半自动（R1 要改成 AI 主导） |
+| G1 | 自动分类 | 报告进来就归到合理的分类/系列，不需要人工建文件夹、改名 | **AI 主导已上线（v0.4）**：规则只做冷启动与兜底 |
 | G2 | 自动标签 | 每篇有稳定、人可读、可筛选、可聚合的主题标签；同义标签自动合并 | AI 已生成 tags/entities 并展示，但还不是导航维度 |
 | G3 | 关联 | 报告之间、主题之间有可解释的关系（相关报告 / 知识图谱 / LLM wiki 主题页） | 仅标签/实体软关联，无图谱与主题页 |
 | G4 | 准确检索 | 关键词、语义、问答三条路都能快速命中，且质量可度量 | 混合检索已上线，但还没有评测集 |
@@ -38,9 +38,10 @@ SQLite 索引库（摘要/正文缓存 + 已读/收藏 + 公开标记 + AI sidec
 
 ### 演进路线（按依赖顺序）
 
-- **R1 AI 分类**（对应 G1）：`kb_enrich` 在生成摘要时顺带产出 `category_ai` / `series_ai`
-  （限定在分类枚举 + 「其他」内），写入索引；现有规则只作兜底与冷启动，分类优先级为
-  「人工覆盖 > AI > 规则」。验收：抽样 50 篇人工判定，AI 分类准确率 ≥ 90%。
+- **R1 AI 分类（已完成，v0.4）**：独立分类器用「标题 + 日期 + 规则分类 + 标签 + AI 摘要」
+  选分类与系列（限定枚举内），写入 `category_ai` / `series_ai` 并切换生效值；规则列
+  `category_rule` / `series_rule` 保留为兜底与对照。分类优先级「人工覆盖 > AI > 规则」中，
+  人工覆盖入口尚未做（表与事件已就绪）。验收：全量分类 + 抽样人工复核。
 - **R2 标签一等公民**（G2）：标签规范化（单复数、别名、中英同义合并）、标签页（点标签看
   该标签下所有报告）、标签作为筛选维度与检索加权；验收：标签覆盖率 ≥ 95%，只出现一次的
   碎片标签占比 ≤ 30%。
@@ -176,6 +177,30 @@ SQLite kb.sqlite ── ② 正文摘要 + 全文（≤2 万字）
   `state` / `public` / `remove`，`GET /api/kb/events?path=` 可查「这篇为什么变成现在这样」。
 - **抽屉元数据**：显示入库时间、最近更新时间与生成摘要所用模型。
 
+**P9：AI 分类（v0.4｜R1）**
+- **独立分类器** `services/kb_classify.py`：输入标题/日期/规则分类/标签/AI 摘要（不读全文），
+  输出 `{category, series, reason}`；分类限定在 9 个枚举内，越界自动回落到规则值并写入原因。
+  与 P1 摘要分成两段跑：重跑分类不动摘要，重跑摘要不重复分类。
+- **存储**：`reports` 增 `category_rule` / `series_rule`（规则基线）与 `category_ai` /
+  `series_ai`（AI 结论），以及 `classify_version` / `classify_at` / `classify_model` /
+  `classify_error`；写入 AI 分类时把生效值 `category` / `series` 切过去，正文变化时自动回落
+  规则并清空 AI 分类（下次增量重跑）。
+- **调度**：`GET /api/kb/classify/stats`、`POST /api/kb/classify`（单篇或小批量）、
+  `python -m app.cli_classify`；host 侧另有后台线程按 `KB_CLASSIFY_INTERVAL` /
+  `KB_CLASSIFY_BATCH` 自动补齐。
+- **可解释**：`report_events` 新增 `classify` / `classify_error` 事件，记录 from/to/reason/model；
+  抽屉里分类徽章悬停显示「AI 分类 / 规则分类」，meta 行出现「分类 AI」。
+- **全量结果（2026-11-17）**：473/473 篇完成分类、0 失败；与规则分类相比 **一级分类
+  一致率 100%**（规则在 9 类上已足够准），**二级系列修正 30 篇**。抽检的修正样本均判定 AI
+  正确，例如：
+  - `Minecraft Java版 0.1.0`：规则按文件名 `0.x` 归到「Classic 0.x」，正文实际是
+    「阶段：Alpha · 大版本：Alpha v1.0」→ AI 归到「Alpha 阶段」（同批修正 0.1.x/0.2.x 共 17 篇）；
+  - 话题精读里的小红书转录 → 系列从「其他精读」修正为「小红书爆款笔记」；知乎高赞回答精读
+    → 新增「知乎精读」；`YC / 海外文章` 统一命名；
+  - 影像收录的抖音壁纸 → 系列从空补成「荒天帝动态壁纸」。
+  一级分类没有变化说明：规则分类在既有 9 类上基本正确，AI 的价值先体现在系列归并与跨类
+  主题（如「知乎精读」）。要更严格地度量分类准确率，需要 R5 的评测集。
+
 ## 结构
 
 ```
@@ -197,6 +222,8 @@ server/app/
   services/kb_search.py     P2：混合检索编排 + 向量补齐
   services/kb_ask.py        P3：RAG 问答（检索 → 引用回答）
   services/kb_digest.py     P5：周报 / 主题聚合（带按天缓存）
+  services/kb_classify.py   R1：AI 分类（分类 + 二级系列 + 原因；规则兜底）
+  cli_classify.py           R1：命令行分类（单篇/小批量/统计，供 Hermes 调用）
   services/kb_public.py     P6：公开标记 + 匿名可访问附件白名单
   cli_enrich.py             批量补 AI sidecar 的 CLI（Hermes 写完报告可调用）
   cli_import_kb_public.py   老站公开状态迁移 CLI（幂等，支持 --dry-run）
@@ -261,6 +288,8 @@ host 半默认反代 `127.0.0.1:8816`；如需临时指向其它端口，可设
 | `KB_AI_TIMEOUT` / `KB_AI_MAX_TOKENS` | `180` / `2000` | 单次模型调用超时与输出上限 |
 | `KB_AI_AUTO` | `1` | 是否起后台线程自动补 AI sidecar |
 | `KB_AI_BATCH` / `KB_AI_INTERVAL` / `KB_AI_CONCURRENCY` | `3` / `30` / `1` | 后台每轮篇数、间隔秒、并发 |
+| `KB_CLASSIFY_AUTO` | `1` | 是否起后台线程自动补 AI 分类 |
+| `KB_CLASSIFY_BATCH` / `KB_CLASSIFY_INTERVAL` / `KB_CLASSIFY_CONCURRENCY` | `4` / `60` / `2` | 分类线程每轮篇数、间隔秒、并发 |
 | `KB_EMBED_ENABLED` | `1` | 是否启用本地向量检索 |
 | `KB_EMBED_MODEL` | `BAAI/bge-small-zh-v1.5` | fastembed 模型名 |
 | `KB_EMBED_MODEL_DIR` / `KB_EMBED_HF_HOME` | `server/data/models` / `server/data/hf-cache` | 模型与 HF 缓存目录 |
@@ -279,8 +308,10 @@ host 半默认反代 `127.0.0.1:8816`；如需临时指向其它端口，可设
 | GET | `/api/kb/search?q=&mode=` | 混合检索：`mode=auto|hybrid|lexical`；返回 `{q, items, total, mode}`，item 带 `score/semantic_score/match/snippet` |
 | GET | `/api/kb/report/{path:path}` | 单篇 `{item}`（含 `preview` 前 1200 字、AI 摘要/要点/标签/实体）；不存在 404 |
 | GET | `/api/kb/tags?q=&limit=` | 标签列表：`{tags:[{name, reports, updated_at}]}`（按报告数倒序） |
-| GET | `/api/kb/events?path=&limit=` | 变更轨迹：`{events:[{id,path,kind,payload,model,at}]}`，kind=`ai_enrich|state|public|ai_error` |
+| GET | `/api/kb/events?path=&limit=` | 变更轨迹：`{events:[{id,path,kind,payload,model,at}]}`，kind=`ai_enrich|classify|classify_error|state|public|ai_error` |
 | GET | `/api/kb/ai/stats` | AI sidecar 统计（`configured/model/total/enriched/failed/pending/version`） |
+| GET | `/api/kb/classify/stats` | AI 分类进度（`configured/model/total/classified/failed/pending/version`） |
+| POST | `/api/kb/classify` | body `{path?, limit?, force?, retry_failed?}`：手动分类（≤50/次） |
 | POST | `/api/kb/enrich` | body `{path?, limit?, force?, retry_failed?}`：手动补 AI 摘要（≤50/次） |
 | GET | `/api/kb/embed/stats` | 向量索引统计（`enabled/available/model/dim/stats`） |
 | POST | `/api/kb/embed` | 手动补一批向量（默认 16 篇） |
@@ -305,7 +336,7 @@ iframe 内使用 `/kb/` 这一套。
 ```bash
 # 单元/接口测试（自带临时 reports + 临时索引库，不碰生产数据）
 cd /root/workspace/plugins/dsh-kb/server
-../.venv/bin/python -m pytest        # 39 passed
+../.venv/bin/python -m pytest        # 46 passed
 
 # 端到端验收
 cd /root/workspace/plugins/dsh-kb/verification
@@ -313,20 +344,20 @@ node verify-app.mjs      # 后端 + 页面端到端（Playwright 直连 http://1
 node verify-proxy.mjs    # host 半（lib/index.js）隔离验收，不需要装进 DSH
 ```
 
-最近一次结果（2026-11-12，P0/P1 工程化对齐后）：
+最近一次结果（2026-11-17，R1 AI 分类上线后）：
 
-- `pytest` **35 passed** —— 索引同步与分类/系列/日期派生、列表筛选（分类/系列/日期区间/
+- `pytest` **46 passed** —— 索引同步与分类/系列/日期派生、列表筛选（分类/系列/日期区间/
   半开区间/分页/排序）、标题与正文检索（snippet/match）、详情 preview、已读/收藏往返、
   非法路径 400、批量读写、筛选态树计数、公开外链（外链生成、匿名 200、内链改写、附件白名单、
   目录页、越权 404、取消公开立即生效、老站公开状态迁移）、P0/P1（指纹缓存、gzip、
-  统一错误体、healthz、版本号、X-Process-Time）。
-- `verify-app.mjs` **89/89 passed** —— 树/列表/检索/前缀反代/重定向；分类、系列、快捷日期
+  统一错误体、healthz、版本号、X-Process-Time、AI 分类存储与同步回归）。
+- `verify-app.mjs` **94/94 passed** —— 树/列表/检索/前缀反代/重定向；分类、系列、快捷日期
   与**自定义日期区间**（含倒置拒绝、筛选条、清除恢复）；健康检查、统一错误体、静态指纹
   长缓存、无指纹短缓存、gzip；标题与正文搜索高亮；排序与分页；详情抽屉（preview、自动已读、
   收藏、打开原文）；AI sidecar 卡片/抽屉；向量与问答接口的降级路径；周报面板（概览/主题/统计）；
   公开开关（公开/取消公开、公开视图、公开外链匿名 200、附件白名单、私有报告 404、越权路径 404）；
   收藏/未读视图；筛选态分类计数收敛；批量选择与批量收藏；搜索历史；
-  保存/套用/删除筛选；移动端；无 JS 报错。
+  保存/套用/删除筛选；AI 分类（进度接口、写入生效、分类来源字段、classify 事件）；移动端；无 JS 报错。
 - `verify-proxy.mjs` **11/11 passed** —— 导出与注册、`/kb/`、`/kb/api/kb`、`/kb/static/*`、
   AI 桥鉴权（无密钥/错密钥都按 404 隐藏）
   反代、`/kb?x=1 → 302 /kb/?x=1`、401/403 鉴权闸门、上游未启动时 502 中文提示。
