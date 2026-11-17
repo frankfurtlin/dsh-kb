@@ -18,3 +18,7 @@ verification/shots/
 # 杂项
 *.log
 .DS_Store
+
+# P10：wiki 是编译产物（由 reports/ + 索引派生，启动时自动重建）
+server/wiki/
+wiki/
