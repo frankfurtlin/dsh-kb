@@ -96,6 +96,14 @@ body { margin:0; padding:28px 32px 72px; max-width:860px; font:15px/1.75 -apple-
 a { color:var(--accent); text-decoration:none; border-bottom:1px solid rgba(0,0,0,0); }
 a:hover { border-bottom-color: currentColor; }
 h1 { font-size:27px; margin:0 0 10px; } h2 { font-size:19px; margin:26px 0 8px; }
+.readbar { position:fixed; top:0; left:0; right:0; height:3px; background:transparent; z-index:20; }
+.readbar i { display:block; height:100%; width:0; background:linear-gradient(90deg,#b99a4e,#8c6f2f); transition:width .12s linear; }
+.toc { border:1px solid var(--line,#e5dfd2); border-radius:12px; padding:12px 16px; margin:18px 0 6px;
+  background:var(--bg-soft,#fbf8f1); font-size:13px; }
+.toc-title { display:block; font-size:11px; letter-spacing:.14em; color:#8c8578; text-transform:uppercase; margin-bottom:6px; }
+.toc ol { margin:0; padding-left:18px; } .toc li { margin:4px 0; }
+.toc a { color:inherit; text-decoration:none; border-bottom:1px dotted rgba(0,0,0,.2); }
+.toc a:hover { border-bottom-style:solid; }
 h3 { font-size:16px; margin:20px 0 6px; }
 .nav { margin-bottom:18px; font-size:13px; color:var(--muted); }
 blockquote { margin:14px 0; padding:10px 14px; border-left:3px solid var(--accent);
@@ -234,6 +242,32 @@ def wiki_article_html(slug: str, request: Request):
         lambda m: f'<sup class="cite"><a href="#src-{m.group(1)}">[{m.group(1)}]</a></sup>',
         body,
     )
+    # P2-3：给正文 H2 生成锚点 id，顺带抽出一份目录；长文再加顶部阅读进度条。
+    toc_items: list[tuple[str, str]] = []
+
+    def _anchor(match):
+        sid = f"sec-{len(toc_items) + 1}"
+        label = re.sub(r"<[^>]+>", "", match.group(1)).strip()
+        toc_items.append((sid, label))
+        return f'<h2 id="{sid}">{match.group(1)}</h2>'
+
+    body = re.sub(r"<h2>(.*?)</h2>", _anchor, body, flags=re.S)
+    toc = ""
+    if len(toc_items) >= 2:
+        toc = (
+            '<nav class="toc" aria-label="文章目录">'
+            '<span class="toc-title">目录</span><ol>'
+            + "".join(f'<li><a href="#{sid}">{html_lib.escape(label)}</a></li>' for sid, label in toc_items)
+            + "</ol></nav>"
+        )
+    progress = (
+        '<div class="readbar" aria-hidden="true"><i id="readbar-i"></i></div>'
+        "<script>(function(){var bar=document.getElementById('readbar-i');if(!bar)return;"
+        "function up(){var h=document.documentElement;var max=(h.scrollHeight-h.clientHeight)||1;"
+        "var p=Math.min(1,Math.max(0,((window.scrollY||h.scrollTop||0))/max));"
+        "bar.style.width=(p*100).toFixed(1)+'%';}"
+        "window.addEventListener('scroll',up,{passive:true});window.addEventListener('resize',up);up();})();</script>"
+    )
     sources = "".join(
         f'<li id="src-{src["n"]}">{src["n"]}. '
         f'<a href="{prefix}/{html_lib.escape(src["url"])}">{html_lib.escape(src["title"])}</a> '
@@ -268,5 +302,9 @@ def wiki_article_html(slug: str, request: Request):
     footer = f'<div class="sources"><h2>来源</h2><ol style="padding-left:20px">{sources}</ol></div>'
     prefix_js = f"<script>window.__KB_PREFIX__={prefix!r};</script>"
     return HTMLResponse(
-        _shell(article["title"], prefix_js + header + body + timeline_block + related_block + footer + _GEN_JS, prefix)
+        _shell(
+            article["title"],
+            prefix_js + progress + header + toc + body + timeline_block + related_block + footer + _GEN_JS,
+            prefix,
+        )
     )

@@ -15,7 +15,7 @@ import logging
 import os
 import re
 from collections import Counter
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from app import config
@@ -51,6 +51,14 @@ def _load_cache(days: int) -> dict | None:
         return None
     if not isinstance(cached, dict):
         return None
+    if not cached.get("generated_at_ts"):
+        # 旧缓存没有精确时间：退化为文件 mtime，UI 仍能显示"生成于 X 前"。
+        try:
+            cached["generated_at_ts"] = datetime.fromtimestamp(
+                path.stat().st_mtime
+            ).isoformat(timespec="seconds")
+        except OSError:
+            pass
     if int(cached.get("days") or 0) != days:
         return None
     if str(cached.get("generated_for") or "") != date.today().isoformat():
@@ -161,7 +169,16 @@ def build(days: int = 7, refresh: bool = False) -> dict:
     if not refresh:
         cached = _load_cache(days)
         if cached:
-            return {**cached, "cached": True}
+            # P2-4：缓存命中时补一个"窗口内当前篇数"，UI 才能提示"新增 N 篇"。
+            since = (date.today() - timedelta(days=days - 1)).isoformat()
+            total_now = len([item for item in kb_store.recent_reports(since) if item.get("date")])
+            cached_total = int(cached.get("total") or 0)
+            return {
+                **cached,
+                "cached": True,
+                "total_now": total_now,
+                "new_since": max(0, total_now - cached_total),
+            }
     aggregate = _aggregate(days)
     if not aggregate["total"]:
         empty = {
@@ -172,6 +189,7 @@ def build(days: int = 7, refresh: bool = False) -> dict:
             "mode": "empty",
             "model": "",
             "generated_at": date.today().isoformat(),
+            "generated_at_ts": datetime.now().isoformat(timespec="seconds"),
             "generated_for": date.today().isoformat(),
             "cached": False,
         }
@@ -206,6 +224,9 @@ def build(days: int = 7, refresh: bool = False) -> dict:
         "mode": mode,
         "model": model,
         "generated_at": date.today().isoformat(),
+        "generated_at_ts": datetime.now().isoformat(timespec="seconds"),
+        "total_now": aggregate["total"],
+        "new_since": 0,
         "generated_for": date.today().isoformat(),
         "cached": False,
     }

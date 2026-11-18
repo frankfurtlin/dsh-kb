@@ -40,7 +40,15 @@ h1{font-size:22px;margin:0 0 6px}
 .title{font-size:16px;font-weight:600;margin:0;color:inherit}
 .summary{font-size:13px;color:#5f5f6b;margin:6px 0 0}
 .empty{color:#8a8a96;border:1px dashed #d8d8e0;border-radius:12px;padding:24px;text-align:center}
-footer{margin-top:32px;color:#9a9aa6;font-size:12px}
+.head{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;margin-bottom:18px}
+.head h1{margin:0;flex:1 1 auto}
+.brand{font-size:12px;color:#8a8a96;letter-spacing:.12em;text-transform:uppercase}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 18px}
+.chip{display:inline-block;padding:4px 12px;border:1px solid #e4e4ea;border-radius:999px;color:#5f5f6b;text-decoration:none;font-size:12.5px;background:#fff}
+.chip.on{border-color:#9d8cff;color:#6b5fc4;background:rgba(157,140,255,.12)}
+@media (prefers-color-scheme:dark){.chip{background:#1f1f28;border-color:#2c2c38;color:#c8c8d4}.chip.on{color:#b9adff;border-color:#6b5fc4}}
+.meta .read{color:#8a8a96}
+footer a{color:inherit}
 """
 
 
@@ -77,23 +85,49 @@ def public_index(request: Request):
             "<div class=\"empty\">在 DSH 的「知识库」面板里打开一篇报告，点「公开」后即可生成外链。</div>"
         )
         return HTMLResponse(_page("公开知识库", body), headers={"Cache-Control": "no-cache"})
+    # P2-1：分类筛选（?cat=）与阅读时长，让公开页像一个能逛的目录而不是一列链接。
+    cat = (request.query_params.get("cat") or "").strip()
+    categories = sorted({str(item.get("category") or "其他") for item in items})
+    filtered = [item for item in items if not cat or str(item.get("category") or "其他") == cat]
+    chips = [f'<a class="chip{"" if cat else " on"}" href="{kb_public.PUBLIC_PREFIX}/">全部 {len(items)}</a>']
+    for name in categories:
+        count = sum(1 for item in items if str(item.get("category") or "其他") == name)
+        active = " on" if cat == name else ""
+        chips.append(
+            f'<a class="chip{active}" href="{kb_public.PUBLIC_PREFIX}/?cat={quote(name)}">{_esc(name)} {count}</a>'
+        )
+    latest = (items[0].get("date") or "") if items else ""
     cards = []
-    for item in items:
+    for item in filtered:
         rel = quote(item["path"])
         summary = item.get("summary_ai") or item.get("summary") or ""
+        size_kb = max(1, int(item.get("size") or 0) // 1024)
+        minutes = max(1, round(size_kb / 12))  # 中文阅读约 12KB/分钟（含 HTML 标记）
         cards.append(
             f'<a class="card" href="{kb_public.PUBLIC_REPORTS_PREFIX}/{rel}">'
-            f'<div class="meta">{_esc(item.get("date"))} · {_esc(item.get("category"))}</div>'
+            f'<div class="meta">{_esc(item.get("date"))} · {_esc(item.get("category"))}'
+            f'<span class="read"> · 约 {minutes} 分钟</span></div>'
             f'<p class="title">{_esc(item.get("title"))}</p>'
             f'<p class="summary">{_esc(summary[:140])}{"…" if len(summary) > 140 else ""}</p>'
             "</a>"
         )
-    body = (
-        "<h1>公开知识库</h1>"
-        f"<p class=\"sub\">共 {len(items)} 篇报告 · 只读外链，无需账号</p>"
-        + "".join(cards)
+    if not cards:
+        cards.append('<div class="empty">这个分类下还没有公开报告。</div>')
+    head = (
+        '<div class="head"><span class="brand">公开知识库</span>'
+        f'<h1>{_esc(cat or "全部公开报告")}</h1></div>'
+        f'<p class="sub">共 {len(filtered)} 篇 · 最近更新 {_esc(latest)} · 只读外链，无需账号</p>'
+        f'<div class="chips">{"".join(chips)}</div>'
     )
-    return HTMLResponse(_page("公开知识库", body), headers={"Cache-Control": "no-cache"})
+    footer = (
+        '<footer>此页由 <strong>dsh-kb</strong> 知识库插件生成，仅列出作者主动公开的报告；'
+        f'最近同步 {_esc(latest)}。</footer>'
+    )
+    page = _page(cat or "公开知识库", head + "".join(cards))
+    page = page.replace(
+        "<footer>此页由 dsh-kb 知识库插件生成，仅列出作者主动公开的报告。</footer>", footer
+    )
+    return HTMLResponse(page, headers={"Cache-Control": "no-cache"})
 
 
 def _serve(rel: str, head: bool):

@@ -258,9 +258,17 @@ body > *:not(.stage) { position: relative; z-index: 1; }
 
 
 
-def _shell(title: str, body: str, prefix: str) -> str:
+def _shell(title: str, body: str, prefix: str, description: str = "") -> str:
+    desc = html.escape(
+        description
+        or "从知识库报告派生的实体与主题图谱：浏览节点、关系、共现边，并跳转到相关报告。"
+    )
     return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="description" content="{desc}" />
+<meta property="og:type" content="article" />
+<meta property="og:title" content="{html.escape(title)} · 知识图谱" />
+<meta property="og:description" content="{desc}" />
 <title>{html.escape(title)} · 知识图谱</title><style>{_PAGE_CSS}</style>{'<style>body{max-width:none}</style>' if title == "图谱画布" else ''}</head>
 <body><div class="nav"><a href="{prefix}/graph/">知识图谱索引</a> · <a href="{prefix}/">返回知识库</a></div>
 {body}</body></html>"""
@@ -783,4 +791,5 @@ def graph_node_html(slug: str, request: Request):
     if not page:
         return HTMLResponse(_shell("未找到", "<h1>未找到该节点</h1>", _prefix(request)), status_code=404)
     body = render_markdown(page["body_md"], _prefix(request))
-    return HTMLResponse(_shell(page["title"], body, _prefix(request)))
+    node_desc = (page.get("summary") or "").strip()[:140] or f'{page.get("title", "")}：知识图谱节点与相关报告。'
+    return HTMLResponse(_shell(page["title"], body, _prefix(request), node_desc))

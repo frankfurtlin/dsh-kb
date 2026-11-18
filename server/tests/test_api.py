@@ -164,3 +164,11 @@ def test_bulk_update_read_and_star(client):
     assert client.post("/api/kb/bulk", json={"paths": []}).status_code == 400
     assert client.post("/api/kb/bulk", json={"paths": paths}).status_code == 400
     assert client.post("/api/kb/bulk", json={"paths": ["../x.html"], "read": True}).status_code == 400
+
+
+def test_tree_reports_sync_metadata(client):
+    """P2-7：树接口要带最近同步时间与 24h 新增数，侧栏才能提示“索引于 X 前”。"""
+    tree = client.get("/api/kb/tree").json()
+    assert tree["synced_at"]
+    assert isinstance(tree["new_recent"], int)
+    assert tree["new_recent"] >= 0

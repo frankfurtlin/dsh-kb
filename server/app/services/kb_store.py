@@ -14,6 +14,7 @@ import html
 import json
 import re
 import sqlite3
+from datetime import datetime, timedelta
 import threading
 import time
 from pathlib import Path
@@ -247,6 +248,7 @@ WIKI_EMBED_COLUMNS = {
 
 _write_lock = threading.Lock()
 _indexed_at = 0.0
+_LAST_SYNC_AT = ""
 
 
 # ---------- 连接与建表 ----------
@@ -599,12 +601,15 @@ def sync(force: bool = False) -> dict:
         finally:
             conn.close()
     _indexed_at = time.time()
+    global _LAST_SYNC_AT
+    synced_at = _now()
+    _LAST_SYNC_AT = synced_at
     return {
         "indexed": indexed,
         "removed": removed,
         "total": total,
         "scan_total": len(items),
-        "synced_at": _now(),
+        "synced_at": synced_at,
     }
 
 
@@ -873,6 +878,10 @@ def tree(
     conn = _connect()
     try:
         total = conn.execute(f"SELECT COUNT(*) AS n FROM reports WHERE {clause}", params).fetchone()["n"]
+        since_24h = (datetime.now() - timedelta(hours=24)).isoformat(timespec="seconds")
+        new_recent = conn.execute(
+            "SELECT COUNT(*) AS n FROM reports WHERE created_at >= ?", (since_24h,)
+        ).fetchone()["n"]
         read_count = conn.execute(
             f"SELECT COUNT(*) AS n FROM reports WHERE {clause} AND read = 1", params
         ).fetchone()["n"]
@@ -911,6 +920,8 @@ def tree(
     return {
         "total": int(total),
         "unread": int(total) - int(read_count),
+        "synced_at": _LAST_SYNC_AT,
+        "new_recent": new_recent,
         "starred": int(counts["starred"]),
         "public": int(counts["public"]),
         "categories": categories,

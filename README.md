@@ -296,6 +296,21 @@ SQLite kb.sqlite ── ② 正文摘要 + 全文（≤2 万字）
   「打开 →」进入详情页操作；116 张卡片从 116 个高成本按钮变为 0 个常驻按钮。
 - 证据截图：`docs/review-shots/{25-drawer-focus,26-ask-progress,27-wiki-index-clean}.png`。
 
+**Sprint C（P2）：内容出口与可逆性**
+- **公开页（P2-1）**：加了标题栏（品牌 + 当前分类）、分类筛选（`?cat=`，带计数）、每篇「约 N 分钟」阅读时长、
+  空分类提示与「最近同步」页脚——对外分享不再是一张裸列表。
+- **图谱节点页分享卡（P2-2）**：节点页输出 `<meta name="description">` 与 `og:title/og:description`，
+  发到聊天工具里有一行像样的摘要（标题本就带节点名）。
+- **Wiki 长文可导航（P2-3）**：正文 H2 自动生成锚点与目录（≥2 节才显示），顶部有滚动阅读进度条；
+  文章页仍是纯 HTML，不依赖前端框架。
+- **周报新鲜度（P2-4）**：角标显示「生成于 X 分钟前 / 今天已生成」，窗口内出现新报告时提示
+  「新增 N 篇，可重新生成」——缓存与新鲜度不再靠猜。
+- **可撤销操作（P2-5）**：批量标记已读/收藏/公开后弹出「撤销」，按**操作前状态**精确还原
+  （不会把本来就收藏的条目一起取消）；打开抽屉自动已读也有一次撤销机会。
+- **快捷键（P2-6）**：`?` 打开帮助层，`/` 或 `⌘K` 聚焦搜索，`J/K` 移动列表光标，`O`/Enter 打开详情，
+  `S` 收藏当前条，`Esc` 关闭抽屉/帮助；所有快捷键都在帮助层里列清楚。
+- **侧栏同步状态（P2-7）**：底部显示「475 篇 · 49 个日期 · 24h 新增 N 篇 · 索引于 X 分钟前」。
+
 ## 结构
 
 ```
@@ -461,7 +476,7 @@ iframe 内使用 `/kb/` 这一套。
 ```bash
 # 单元/接口测试（自带临时 reports + 临时索引库，不碰生产数据）
 cd /root/workspace/plugins/dsh-kb/server
-../.venv/bin/python -m pytest        # 67 passed
+../.venv/bin/python -m pytest        # 68 passed
 ../.venv/bin/python -m app.cli_eval  # 检索评测（lexical / hybrid / hybrid+ppr）
 
 # 端到端验收
@@ -470,14 +485,14 @@ node verify-app.mjs      # 后端 + 页面端到端（Playwright 直连 http://1
 node verify-proxy.mjs    # host 半（lib/index.js）隔离验收，不需要装进 DSH
 ```
 
-最近一次结果（2026-11-19，v0.10 体验优化 Sprint B 后）：
+最近一次结果（2026-11-19，v0.11 体验优化 Sprint C 后）：
 
-- `pytest` **67 passed** —— 索引同步与分类/系列/日期派生、列表筛选（分类/系列/日期区间/
+- `pytest` **68 passed** —— 索引同步与分类/系列/日期派生、列表筛选（分类/系列/日期区间/
   半开区间/分页/排序）、标题与正文检索（snippet/match）、详情 preview、已读/收藏往返、
   非法路径 400、批量读写、筛选态树计数、公开外链（外链生成、匿名 200、内链改写、附件白名单、
   目录页、越权 404、取消公开立即生效、老站公开状态迁移）、P0/P1（指纹缓存、gzip、
   统一错误体、healthz、版本号、X-Process-Time、AI 分类存储与同步回归、图谱节点编译/增量/阈值/API/HTML、共现边与 PPR）。
-- `verify-app.mjs` **119/119 passed** —— 树/列表/检索/前缀反代/重定向；分类、系列、快捷日期
+- `verify-app.mjs` **131/131 passed** —— 树/列表/检索/前缀反代/重定向；分类、系列、快捷日期
   与**自定义日期区间**（含倒置拒绝、筛选条、清除恢复）；健康检查、统一错误体、静态指纹
   长缓存、无指纹短缓存、gzip；标题与正文搜索高亮；排序与分页；详情抽屉（preview、自动已读、
   收藏、打开原文）；AI sidecar 卡片/抽屉；向量与问答接口的降级路径；周报面板（概览/主题/统计）；
@@ -489,7 +504,7 @@ node verify-proxy.mjs    # host 半（lib/index.js）隔离验收，不需要装
 - `verify-proxy.mjs` **11/11 passed** —— 导出与注册、`/kb/`、`/kb/api/kb`、`/kb/static/*`、
   AI 桥鉴权（无密钥/错密钥都按 404 隐藏）
   反代、`/kb?x=1 → 302 /kb/?x=1`、401/403 鉴权闸门、上游未启动时 502 中文提示。
-- `verify-dsh.mjs` **26/26 passed**（真实 DSH 面板内；公开开关是状态自适应，初始已公开时会多 1 项）—— 匿名 401、侧栏「知识库」行、
+- `verify-dsh.mjs` **33/33 passed**（真实 DSH 面板内；公开开关是状态自适应，初始已公开时会多 1 项）—— 匿名 401、侧栏「知识库」行、
   iframe `/kb/`、首屏卡片/计数/分类、搜索高亮、分类筛选、详情抽屉与自动已读、公开开关
   （抽屉按钮 / 复制链接按钮出现与消失，状态自适应）、AI 问答（真实调模型，答案 + 引用）、
   周报面板、**知识图谱索引**（284 节点 / 3109 引用 / 1459 互链）、**LLM Wiki 文章**（卡片 → 文章页，
@@ -531,6 +546,8 @@ AI 问答与周报要调模型（单次 20–40s），host 半对 `/kb/api/kb/as
 | `25-drawer-focus.png` | 抽屉焦点陷阱：Tab 循环留在抽屉内、Esc 归还卡片（`docs/review-shots/`） |
 | `26-ask-progress.png` | AI 问答进度：候选报告先出现、计时与「停止生成」 |
 | `27-wiki-index-clean.png` | Wiki 索引页收敛：卡片只留「打开 →」，过期文章才给重新生成 |
+| `29-dsh-help.png` | 快捷键帮助层（? 打开，Esc 关闭） |
+| `30-dsh-wiki-toc.png` | LLM Wiki 长文目录与阅读进度条 |
 | `26-graph-canvas-studio.png` | 图谱画布（暖纸底 + 金/薰衣草/玫瑰配色；节点为玻璃光球、背景有水母/光球纹理，两簇：Minecraft 谱系与 A 股） |
 
 语法门：`node --check lib/index.js && node --check client.js && node --check verification/verify-app.mjs && node --check verification/verify-proxy.mjs`；

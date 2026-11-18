@@ -306,6 +306,12 @@ async function main() {
     const pubIndexText = await pubIndexResp.text()
     check('P6 公开目录页列出该报告',
       pubIndexResp.status === 200 && pubIndexText.includes(pubPair[0].title.slice(0, 12)), `${pubIndexResp.status}`)
+    check('P2-1 公开页有标题栏与分类筛选',
+      pubIndexText.includes('class="brand"') && pubIndexText.includes('class="chip'),
+      `brand=${pubIndexText.includes('class="brand"')} chips=${pubIndexText.includes('class="chip')}`)
+    check('P2-1 公开页卡片显示阅读时长', /约 \d+ 分钟/.test(pubIndexText))
+    const pubFilterResp = await fetch(ORIGIN + '/kb-public/?cat=' + encodeURIComponent(pubPair[0].category || ''))
+    check('P2-1 公开页分类筛选可用', pubFilterResp.status === 200, `${pubFilterResp.status}`)
     const privResp = await fetch(ORIGIN + '/kb-public/reports/' + privPath.split('/').map(encodeURIComponent).join('/'))
     check('P6 未公开报告匿名访问 404', privResp.status === 404, `${privResp.status}`)
     const sharedAsset = await fetch(ORIGIN + '/kb-public/reports/assets/shell.css')
@@ -495,6 +501,7 @@ await page.fill('#kb-search', '')
       (await page.locator('#kb-drawer-actions a.kb-btn-primary').getAttribute('href')) === `reports/${cardPath}`)
     const unreadAfter = (await api('/api/kb/tree')).json.unread
     check('打开抽屉自动标记已读', unreadAfter === unreadBefore - 1, `${unreadBefore} → ${unreadAfter}`)
+    check('P2-5 自动已读给出撤销入口', (await page.locator('.kb-undo').count()) > 0)
     await shot(page, '04-drawer.png', true)
 
     await page.click('#kb-drawer-star')
@@ -593,6 +600,7 @@ await page.fill('#kb-search', '')
     check('P5 周报面板展示概览与分类统计',
       digestText.includes('篇报告') && digestText.includes('分类'),
       digestText.slice(0, 60).replace(/\s+/g, ' '))
+    check('P2-4 周报显示生成时间或新增提示', /生成于|今天已生成/.test(digestText), digestText.slice(0, 120).replace(/\s+/g, ' '))
     check('P5 周报主题卡片或统计视图存在',
       (await page.locator('.kb-theme').count()) > 0 || (await page.locator('.kb-digest-chip').count()) > 0)
     await shot(page, '08-digest.png', true)
@@ -620,8 +628,24 @@ await page.fill('#kb-search', '')
       batchAfter.starred >= batchBefore.starred + 1,
       `${batchBefore.starred} → ${batchAfter.starred}，选中 ${selPaths.length} 篇`)
     check('P7 批量操作后清空勾选', (await page.locator('.kb-check:checked').count()) === 0)
+    check('P2-5 批量收藏给出撤销入口', (await page.locator('.kb-undo').count()) > 0)
+    await page.locator('.kb-undo-btn').first().click()
+    await page.waitForTimeout(1200)
+    const undoTree = (await api('/api/kb/tree')).json
+    check('P2-5 撤销恢复收藏状态', undoTree.starred === batchBefore.starred, `${batchAfter.starred} → ${undoTree.starred}`)
     await page.click('#kb-select-toggle')
     await page.waitForTimeout(300)
+    check('P2-7 侧栏显示索引时间', /索引于/.test(await page.locator('#kb-side-hint').innerText()),
+      await page.locator('#kb-side-hint').innerText())
+    await page.keyboard.press('?')
+    await page.waitForTimeout(300)
+    check('P2-6 ? 打开快捷键帮助', (await page.locator('#kb-help').count()) === 1)
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(200)
+    check('P2-6 Esc 关闭快捷键帮助', (await page.locator('#kb-help').count()) === 0)
+    await page.keyboard.press('j')
+    await page.waitForTimeout(200)
+    check('P2-6 j 键移动列表光标', (await page.locator('.kb-item.is-cursor').count()) === 1)
 
     // ---------- 搜索历史（P7） ----------
     await page.fill('#kb-search', '铝业')
@@ -688,12 +712,12 @@ await page.fill('#kb-search', '')
 
     // P13+：文章时间线/相关文章 + 图谱画布
     const seededArticles = await seedArticles([
-      { slug: 'topic-verify-a', title: '校验主题 A', overview: '主题 A 的总览', body: '# 校验主题 A\n\n总览 A\n\n## 小节\n\n正文 [1]\n',
+      { slug: 'topic-verify-a', title: '校验主题 A', overview: '主题 A 的总览', body: '# 校验主题 A\n\n总览 A\n\n## 小节一\n\n正文 [1]\n\n## 小节二\n\n更多 [2]\n',
         sources: [
           { path: '20260101/a-share-report.html', title: 'A股市场全景分析报告', date: '2026-01-01' },
           { path: '20260115/xhs-note.html', title: '小红书爆款笔记精读', date: '2026-01-15' },
         ] },
-      { slug: 'topic-verify-b', title: '校验主题 B', overview: '主题 B 的总览', body: '# 校验主题 B\n\n总览 B\n\n## 小节\n\n正文 [1]\n',
+      { slug: 'topic-verify-b', title: '校验主题 B', overview: '主题 B 的总览', body: '# 校验主题 B\n\n总览 B\n\n## 小节一\n\n正文 [1]\n\n## 小节二\n\n更多 [2]\n',
         sources: [
           { path: '20260101/a-share-report.html', title: 'A股市场全景分析报告', date: '2026-01-01' },
           { path: '20260115/xhs-note.html', title: '小红书爆款笔记精读', date: '2026-01-15' },
@@ -702,6 +726,11 @@ await page.fill('#kb-search', '')
     check('种子文章写入索引', seededArticles, seedLog.slice(0, 160))
     const detail = await (await fetch(ORIGIN + '/api/wiki/article/topic-verify-a')).json().catch(() => ({}))
     const wikiIndexHtml = await (await fetch(ORIGIN + '/wiki/')).text()
+    const articleHtml = await (await fetch(ORIGIN + '/wiki/topic-verify-a')).text()
+    check('P2-3 Wiki 文章页生成目录与阅读进度',
+      articleHtml.includes('class="toc"') && articleHtml.includes('id="readbar-i"') &&
+      articleHtml.includes('<h2 id="sec-1"'),
+      `toc=${articleHtml.includes('class="toc"')} bar=${articleHtml.includes('id="readbar-i"')}`)
     check('P1-4 Wiki 索引页只为过期文章保留重新生成', wikiIndexHtml.split('onclick="gen(').length - 1 <= 2,
       `genButtons=${wikiIndexHtml.split('onclick="gen(').length - 1}`)
 

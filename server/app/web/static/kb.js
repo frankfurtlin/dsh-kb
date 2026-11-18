@@ -152,6 +152,96 @@ function kbBindSearch() {
   });
 }
 
+
+// ---------- P2：相对时间 / 撤销提示 / 快捷键 ----------
+
+function kbAgo(ts) {
+  if (!ts || isNaN(ts)) return '';
+  var diff = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (diff < 60) return '刚刚';
+  if (diff < 3600) return Math.round(diff / 60) + ' 分钟前';
+  if (diff < 86400) return Math.round(diff / 3600) + ' 小时前';
+  return Math.round(diff / 86400) + ' 天前';
+}
+
+function kbUndoToast(message, undoFn) {
+  var el = document.createElement('div');
+  el.className = 'kb-undo';
+  el.setAttribute('role', 'status');
+  var text = document.createElement('span');
+  text.textContent = message;
+  var btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'kb-undo-btn';
+  btn.textContent = '撤销';
+  btn.addEventListener('click', async function () {
+    btn.disabled = true;
+    try { await undoFn(); } finally { el.remove(); }
+  });
+  el.appendChild(text);
+  el.appendChild(btn);
+  document.body.appendChild(el);
+  window.setTimeout(function () { if (el.parentNode) el.remove(); }, 9000);
+}
+
+var _kbCursor = -1;
+
+function kbMoveCursor(delta) {
+  if (!_kbItems.length) return;
+  _kbCursor = Math.max(0, Math.min(_kbItems.length - 1, _kbCursor + delta));
+  var cards = document.querySelectorAll('#kb-list .kb-item');
+  for (var i = 0; i < cards.length; i++) cards[i].classList.toggle('is-cursor', i === _kbCursor);
+  if (cards[_kbCursor] && cards[_kbCursor].scrollIntoView) cards[_kbCursor].scrollIntoView({ block: 'nearest' });
+}
+
+function kbCursorAction(kind) {
+  if (_kbCursor < 0) { kbMoveCursor(1); return; }
+  if (!_kbItems[_kbCursor]) return;
+  if (kind === 'open') kbOpenDrawer(_kbCursor);
+  else if (kind === 'star') kbToggleStar(null, _kbCursor);
+}
+
+function kbIsTyping(target) {
+  var el = target || document.activeElement;
+  if (!el) return false;
+  var tag = String(el.tagName || '').toUpperCase();
+  return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable === true;
+}
+
+function kbShowShortcutHelp() {
+  if (kbEl('kb-help')) return;
+  var rows = [
+    ['⌘K / Ctrl+K', '聚焦搜索框'],
+    ['/', '聚焦搜索框'],
+    ['J / K', '下一条 / 上一条'],
+    ['O 或 Enter', '打开当前条详情'],
+    ['S', '收藏 / 取消收藏当前条'],
+    ['Esc', '关闭抽屉或帮助'],
+    ['?', '打开本帮助'],
+  ];
+  var wrap = document.createElement('div');
+  wrap.id = 'kb-help';
+  wrap.className = 'kb-help';
+  wrap.setAttribute('role', 'dialog');
+  wrap.setAttribute('aria-modal', 'true');
+  wrap.setAttribute('aria-label', '键盘快捷键');
+  wrap.innerHTML = '<div class="kb-help-card" tabindex="-1">' +
+    '<div class="kb-help-head"><strong>键盘快捷键</strong>' +
+    '<button type="button" class="kb-iconbtn" onclick="kbCloseShortcutHelp()" aria-label="关闭帮助">✕</button></div>' +
+    '<dl>' + rows.map(function (row) {
+      return '<div class="kb-help-row"><dt>' + row[0] + '</dt><dd>' + row[1] + '</dd></div>';
+    }).join('') + '</dl><p class="kb-help-foot">按 Esc 关闭</p></div>';
+  wrap.addEventListener('click', function (event) { if (event.target === wrap) kbCloseShortcutHelp(); });
+  document.body.appendChild(wrap);
+  var card = wrap.querySelector('.kb-help-card');
+  if (card && card.focus) card.focus();
+}
+
+function kbCloseShortcutHelp() {
+  var el = kbEl('kb-help');
+  if (el) el.remove();
+}
+
 function kbBindKeys() {
   document.addEventListener('keydown', kbTrapDrawerKeys);
   document.addEventListener('keydown', function (event) {
@@ -163,10 +253,34 @@ function kbBindKeys() {
       return;
     }
     if (event.key === 'Escape') {
+      if (kbEl('kb-help')) { kbCloseShortcutHelp(); return; }
       var drawer = kbEl('kb-drawer');
       if (drawer && !drawer.classList.contains('bl-hidden')) { kbCloseDrawer(); return; }
       var search = kbEl('kb-search');
       if (search && document.activeElement === search && kbState.q) { kbClearSearch(); }
+      return;
+    }
+    if (kbIsTyping(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+    var key = event.key;
+    if (key === '?') { event.preventDefault(); kbShowShortcutHelp(); return; }
+    if (key === '/') {
+      event.preventDefault();
+      var box = kbEl('kb-search');
+      if (box) box.focus();
+      return;
+    }
+    if (key === 'j' || key === 'k') {
+      event.preventDefault();
+      kbMoveCursor(key === 'j' ? 1 : -1);
+      return;
+    }
+    if (key === 'o' || key === 'Enter') {
+      if (_kbCursor >= 0 && !kbEl('kb-help')) { event.preventDefault(); kbCursorAction('open'); }
+      return;
+    }
+    if (key === 's' && _kbCursor >= 0) {
+      event.preventDefault();
+      kbCursorAction('star');
     }
   });
 }
@@ -202,7 +316,12 @@ async function kbLoadTree(force) {
   kbRenderTags();
   kbRenderDates();
   var hint = kbEl('kb-side-hint');
-  if (hint) hint.textContent = data.total + ' 篇 · ' + (data.dates || []).length + ' 个日期';
+  if (hint) {
+    var bits = [data.total + ' 篇', (data.dates || []).length + ' 个日期'];
+    if (data.new_recent) bits.push('24h 新增 ' + data.new_recent + ' 篇');
+    if (data.synced_at) bits.push('索引于 ' + kbAgo(Date.parse(data.synced_at)));
+    hint.textContent = bits.join(' · ');
+  }
 }
 
 function kbVisibleTotal() {
@@ -776,7 +895,14 @@ function kbOpenDrawer(index) {
   }
   kbFillDrawer(item);
   kbLoadDetail(item.path);
-  kbMarkRead(item, item.path);
+  var wasRead = !!item.read;
+  kbMarkRead(item, item.path).then(function () {
+    if (!wasRead) {
+      kbUndoToast('已标记为已读：' + item.title, function () {
+        return kbSetState(item.path, { read: false });
+      });
+    }
+  });
   var panel = drawer.querySelector('.kb-drawer-panel');
   if (panel) panel.focus();
 }
@@ -1125,6 +1251,14 @@ async function kbDigestLoad(refresh) {
   var meta = ['窗口 ' + kbFmtDate(data.since) + ' → ' + kbFmtDate(data.until), data.total + ' 篇报告'];
   if (data.ai_enriched) meta.push(data.ai_enriched + ' 篇有 AI 摘要');
   meta.push(data.mode === 'ai' ? '模型整理' : '统计视图');
+  if (data.generated_at_ts) {
+    var generatedTs = Date.parse(data.generated_at_ts);
+    if (!isNaN(generatedTs)) meta.push('生成于 ' + kbAgo(generatedTs));
+  } else if (data.cached) {
+    meta.push('今天已生成');
+  }
+  if (data.new_since) meta.push('窗口内新增 ' + data.new_since + ' 篇，可重新生成');
+  else if (data.cached && data.mode === 'ai') meta.push('暂无新增，可直接复用');
   var html = '<p class="kb-digest-meta">' + esc(meta.join(' · ')) + '</p>';
   html += '<p class="kb-digest-overview">' + kbAskFormat(data.overview || '') + '</p>';
   var themes = data.themes || [];
@@ -1258,6 +1392,13 @@ async function kbBatchAction(action) {
   }
   var paths = kbSelectedPaths();
   if (!paths.length) { showToast('先勾选要操作的报告'); return; }
+  // P2-5：撤销要还原“操作前”的状态，而不是机械取反（否则会把本来就收藏的条目一起取消）。
+  var before = {};
+  _kbItems.forEach(function (item) {
+    if (paths.indexOf(item.path) !== -1) {
+      before[item.path] = { read: !!item.read, starred: !!item.starred, public: !!item.public };
+    }
+  });
   if (action === 'copy') {
     var urls = paths.filter(function (path) { return !!_kbPublicPaths[path]; }).map(kbPublicUrl);
     if (!urls.length) { showToast('选中的报告都还没公开'); return; }
@@ -1278,6 +1419,30 @@ async function kbBatchAction(action) {
   if (!data) return;
   _kbSelected = {};
   showToast(label + '（' + (data.updated || 0) + ' 篇）' + ((data.missing || []).length ? '，' + data.missing.length + ' 篇未找到' : ''));
+  if (action === 'read' || action === 'star' || action === 'public' || action === 'unpublic') {
+    var field = action === 'read' ? 'read' : (action === 'star' ? 'starred' : 'public');
+    var target = action === 'public';
+    var revert = paths.filter(function (path) {
+      var prev = before[path];
+      if (!prev) return false;
+      return action === 'unpublic' ? prev.public === true : prev[field] !== target;
+    });
+    if (revert.length) {
+      kbUndoToast(label + '：' + (data.updated || 0) + ' 篇', function () {
+        var body = { paths: revert };
+        body[field] = action === 'unpublic';
+        if (action === 'read') body.read = false;
+        return fetch(API + '/kb/bulk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }).then(function (resp) { return resp.json(); }).then(function () {
+          kbLoadTree();
+          kbLoad();
+        });
+      });
+    }
+  }
   await kbLoadPublicState();
   kbLoadTree();
   kbLoad();

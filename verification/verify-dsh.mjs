@@ -189,6 +189,20 @@ try {
     }
     await frame.click('.kb-drawer-foot button')
     await page.waitForTimeout(300)
+    const sideHint = await frame.locator('#kb-side-hint').innerText()
+    check('P2-7 iframe 内显示索引时间', /索引于/.test(sideHint), sideHint)
+    // P2-6：? 打开快捷键帮助、Esc 关闭、j 移动列表光标
+    await frame.evaluate(() => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true })))
+    await page.waitForTimeout(300)
+    check('P2-6 iframe 内 ? 打开快捷键帮助', (await frame.locator('#kb-help').count()) === 1)
+    await page.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    await frame.evaluate(() => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+    await page.waitForTimeout(200)
+    check('P2-6 iframe 内 Esc 关闭快捷键帮助', (await frame.locator('#kb-help').count()) === 0)
+    await frame.evaluate(() => document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', bubbles: true })))
+    await page.waitForTimeout(200)
+    check('P2-6 iframe 内 j 键移动列表光标', (await frame.locator('.kb-item.is-cursor').count()) === 1)
+    await page.screenshot({ path: join(OUT, '29-dsh-help.png'), fullPage: true })
 
     // P3：AI 问答面板（iframe 内，真实调模型，较慢）
     await frame.click('#kb-ask-entry')
@@ -208,6 +222,7 @@ try {
     await frame.waitForSelector('#kb-digest-body .kb-digest-meta', { timeout: 120000 })
     const digestText = await frame.locator('#kb-digest-body').innerText()
     check('iframe 内周报面板展示概览', digestText.includes('篇报告'), digestText.slice(0, 50).replace(/\s+/g, ' '))
+    check('P2-4 iframe 内周报显示新鲜度', /生成于|今天已生成|新增/.test(digestText), digestText.slice(0, 120).replace(/\s+/g, ' '))
     await page.screenshot({ path: join(OUT, '09-dsh-digest.png'), fullPage: true })
     await frame.click('#kb-digest .kb-ask-foot .kb-btn-primary')
     await page.waitForTimeout(300)
@@ -265,6 +280,14 @@ try {
       const cites = await wikiFrame.locator('sup.cite a').count()
       check('LLM Wiki 文章页带 [n] 引用与来源列表',
         articleHtml.includes('来源') && cites > 0, `cites=${cites}`)
+      const tocLinks = await wikiFrame.locator('.toc a').count()
+      const readbar = await wikiFrame.locator('#readbar-i').count()
+      check('P2-3 文章页有目录与阅读进度条', tocLinks > 0 && readbar === 1, `toc=${tocLinks} bar=${readbar}`)
+      await wikiFrame.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+      await page.waitForTimeout(400)
+      const barWidth = readbar ? await wikiFrame.locator('#readbar-i').evaluate((el) => el.style.width) : ''
+      check('P2-3 滚动后阅读进度增长', /%$/.test(barWidth) && parseFloat(barWidth) > 0, `width=${barWidth}`)
+      await page.screenshot({ path: join(OUT, '30-dsh-wiki-toc.png'), fullPage: false })
       await page.screenshot({ path: join(OUT, '21-dsh-wiki-article.png'), fullPage: true })
     } else {
       check('LLM Wiki 文章页带 [n] 引用与来源列表', false, '没有可点击的文章卡片')
