@@ -144,33 +144,96 @@ def render_markdown(markdown: str, prefix: str = "") -> str:
 
 
 _PAGE_CSS = """
-:root { color-scheme: light dark; }
-body { margin: 0; padding: 28px 32px 64px; max-width: 860px; font: 15px/1.75 -apple-system,
-  "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; color: #1f2430; background: #fff; }
-a { color: #4f46e5; text-decoration: none; border-bottom: 1px solid rgba(79,70,229,.25); }
-a:hover { border-bottom-color: currentColor; }
-h1 { font-size: 26px; margin: 0 0 6px; }
-h2 { font-size: 17px; margin: 26px 0 8px; }
-blockquote { margin: 10px 0; padding: 8px 12px; border-left: 3px solid #c7d2fe; color: #4b5563;
-  background: #f8f9ff; border-radius: 4px; }
-ul { padding-left: 22px; }
-li { margin: 3px 0; }
-code { background: #eef0f6; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
-.muted { color: #6b7280; font-size: 12px; }
-.nav { margin-bottom: 18px; font-size: 13px; color: #6b7280; }
-@media (prefers-color-scheme: dark) {
-  body { color: #e5e7eb; background: #16171d; }
-  blockquote { background: #1f2230; border-color: #4c51bf; color: #cbd5e1; }
-  code { background: #262936; }
-  a { color: #a5b4fc; border-bottom-color: rgba(165,180,252,.3); }
+:root {
+  color-scheme: light dark;
+  --bg: #f6f2e8; --bg-soft: #fbf8f1;
+  --ink: #3d3a33; --ink-2: #6f6a5f; --ink-3: #9a948a;
+  --gold: #a67c2e; --lav: #6b5fc4; --rose: #9c5f74; --mint: #2f8f74;
+  --line: rgba(92, 88, 80, .14); --line-2: rgba(92, 88, 80, .28);
+  --card: rgba(255, 253, 246, .78); --chip: rgba(255, 255, 255, .55);
+  --shadow: 0 24px 60px rgba(61, 58, 51, .1);
+  --serif: "Songti SC", "Noto Serif SC", "Source Han Serif SC", Georgia, serif;
 }
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d0e0e; --bg-soft: #141514;
+    --ink: #ecece9; --ink-2: #a5a6a1; --ink-3: #75766f;
+    --gold: #e6cf98; --lav: #c3bcf2; --rose: #e3b3c4; --mint: #ace0cf;
+    --line: rgba(228, 228, 222, .11); --line-2: rgba(228, 228, 222, .24);
+    --card: rgba(255, 255, 255, .035); --chip: rgba(255, 255, 255, .06);
+    --shadow: 0 24px 60px rgba(0, 0, 0, .45);
+  }
+}
+body {
+  margin: 0; padding: 34px clamp(20px, 4vw, 56px) 72px; max-width: 1020px;
+  font: 14px/1.7 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  color: var(--ink); background:
+    radial-gradient(1100px 560px at 12% -12%, rgba(201, 162, 74, .16), transparent 60%),
+    radial-gradient(900px 520px at 108% 4%, rgba(107, 95, 196, .1), transparent 55%),
+    var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+.nav { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 0 0 28px;
+  font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); }
+.nav a { color: var(--ink-2); border: 0; }
+.nav a:hover { color: var(--gold); }
+.eyebrow { margin: 0 0 10px; font-size: 11px; letter-spacing: .22em; font-weight: 600;
+  text-transform: uppercase; color: var(--gold); }
+.eyebrow span { margin-left: 10px; letter-spacing: .1em; font-weight: 400;
+  text-transform: none; color: var(--ink-2); }
+h1 { margin: 0 0 10px; font: 600 clamp(26px, 3.4vw, 34px)/1.24 var(--serif); letter-spacing: .01em; }
+.lead { margin: 0 0 20px; max-width: 58ch; font-size: 14px; color: var(--ink-2); }
+.stats { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0 24px; }
+.stat { flex: 1 1 132px; padding: 14px 16px; border: 1px solid var(--line);
+  border-radius: 16px; background: var(--card); backdrop-filter: blur(14px); }
+.stat b { display: block; font: 600 24px/1.1 var(--serif); color: var(--ink);
+  font-variant-numeric: tabular-nums; }
+.stat span { display: block; margin-top: 6px; font-size: 11.5px; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--ink-3); }
+.panel { margin: 0 0 18px; padding: 18px 22px; border: 1px solid var(--line); border-radius: 20px;
+  background: var(--card); backdrop-filter: blur(14px); box-shadow: var(--shadow); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0; font-size: 12.5px; color: var(--ink-2); }
+.legend i { display: inline-block; width: 9px; height: 9px; margin-right: 7px; border-radius: 50%;
+  vertical-align: 1px; }
+.legend .line { display: inline-block; width: 18px; height: 2px; margin-right: 7px;
+  vertical-align: 4px; border-radius: 2px; }
+h2 { margin: 26px 0 10px; font: 600 16px/1.4 var(--serif); letter-spacing: .02em; }
+ul { padding-left: 18px; margin: 0; columns: 2; column-gap: 34px; }
+li { margin: 5px 0; break-inside: avoid; font-size: 13.5px; }
+a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--line-2); }
+a:hover { border-bottom-color: var(--gold); }
+blockquote { margin: 0; padding: 0; border: 0; background: none; color: var(--ink-2); font-size: 13.5px; }
+code { padding: 1px 6px; border-radius: 6px; background: var(--chip); font-size: 12.5px; }
+.muted { color: var(--ink-3); font-size: 12px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 11px;
+  border: 1px solid var(--line); border-radius: 999px; font-size: 10.5px;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+.canvas-wrap { padding: 12px; }
+#kb-canvas { display: block; width: 100%; height: clamp(420px, 62vh, 720px);
+  border-radius: 14px; background: var(--bg-soft); cursor: grab; }
+.canvas-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 12px; }
+.canvas-bar input { flex: 0 1 240px; padding: 9px 14px; border: 1px solid var(--line-2);
+  border-radius: 999px; background: var(--bg-soft); color: var(--ink);
+  font: 13px/1.4 inherit; outline: none; }
+.canvas-bar input:focus { border-color: var(--gold); }
+.canvas-bar button { padding: 9px 16px; border: 1px solid var(--line-2); border-radius: 999px;
+  background: transparent; color: var(--ink-2); font: 13px inherit; cursor: pointer;
+  letter-spacing: .02em; }
+.canvas-bar button:hover { border-color: var(--gold); color: var(--ink); }
+#kb-meta { font-size: 12px; color: var(--ink-3); letter-spacing: .02em; }
+#kb-panel { margin: 16px 0 0; min-height: 64px; font-size: 13.5px; color: var(--ink-2); }
+#kb-panel h3 { margin: 0 0 6px; font: 600 17px/1.4 var(--serif); color: var(--ink); }
+#kb-panel .meta { font-size: 12px; color: var(--ink-3); margin-bottom: 8px; }
+@media (max-width: 760px) { ul { columns: 1; } body { padding: 24px 18px 56px; } }
 """
+
 
 
 def _shell(title: str, body: str, prefix: str) -> str:
     return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>{html.escape(title)} · 知识图谱</title><style>{_PAGE_CSS}</style></head>
+<title>{html.escape(title)} · 知识图谱</title><style>{_PAGE_CSS}</style>{'<style>body{max-width:none}</style>' if title == "图谱画布" else ''}</head>
 <body><div class="nav"><a href="{prefix}/graph/">知识图谱索引</a> · <a href="{prefix}/">返回知识库</a></div>
 {body}</body></html>"""
 
@@ -190,15 +253,29 @@ def graph_index_html(request: Request):
         ) or "<li>暂无节点</li>"
 
     body = (
-        f"<h1>知识图谱</h1><blockquote>{stats.get('entities', 0)} 个实体节点 · "
-        f"{stats.get('topics', 0)} 个主题节点 · {stats['sources']} 条报告引用 · "
-        f"{stats['links']} 条互链 · {stats.get('edges', 0)} 条共现边</blockquote>"
-        f"<h2>实体节点（按提及报告数排序）</h2><ul>{_list('entity')}</ul>"
-        f"<h2>主题节点（按标签覆盖报告数排序）</h2><ul>{_list('topic')}</ul>"
-        f'<p><a href="{_prefix(request)}/graph/canvas">打开可视化画布 →</a></p>'
-        "<p class=\"muted\">节点与共现边由 <code>reports/</code> 的 AI 实体与标签确定性编译；"
+        '<p class="eyebrow">Knowledge graph<span>知识图谱 · 确定性编译</span></p>'
+        "<h1>每一篇报告，都在这里长成网。</h1>"
+        '<p class="lead">节点来自报告的 AI 实体与标签，边来自共现与互链；没有模型参与也能重建、可追溯到来源报告。</p>'
+        '<div class="stats">'
+        f'<div class="stat"><b>{stats.get("entities", 0)}</b><span>实体节点</span></div>'
+        f'<div class="stat"><b>{stats.get("topics", 0)}</b><span>主题节点</span></div>'
+        f'<div class="stat"><b>{stats["links"]}</b><span>节点互链</span></div>'
+        f'<div class="stat"><b>{stats.get("edges", 0)}</b><span>共现边</span></div>'
+        "</div>"
+        '<div class="panel"><p class="legend">'
+        f'<span><i style="background:var(--lav)"></i>实体节点（{stats.get("entities", 0)}）</span>'
+        f'<span><i style="background:var(--rose)"></i>主题节点（{stats.get("topics", 0)}）</span>'
+        '<span><i class="line" style="background:rgba(166,124,46,.55)"></i>共现边</span>'
+        '<span><i class="line" style="background:var(--line-2)"></i>互链边</span>'
+        f'<span class="muted">{stats["sources"]} 条报告引用</span>'
+        "</p></div>"
+        f'<div class="panel"><p><a href="{_prefix(request)}/graph/canvas">打开可视化画布 →</a>'
+        '<span class="pill" style="margin-left:10px">canvas · force layout</span></p></div>'
+        f'<h2>实体节点（按提及报告数排序）</h2><div class="panel"><ul>{_list("entity")}</ul></div>'
+        f'<h2>主题节点（按标签覆盖报告数排序）</h2><div class="panel"><ul>{_list("topic")}</ul></div>'
+        '<p class="muted">节点与共现边由 <code>reports/</code> 的 AI 实体与标签确定性编译；'
         "重新编译见 <code>POST /api/graph/compile</code>。"
-        "长文阅读与 AI 综述在「LLM Wiki」入口（下一阶段）。</p>"
+        "长文阅读与 AI 综述在「LLM Wiki」入口。</p>"
     )
     return HTMLResponse(_shell("知识图谱索引", body, _prefix(request)))
 
@@ -219,7 +296,13 @@ _CANVAS_JS = r"""
   let data = { nodes: [], edges: [] };
   let nodes = [], edges = [], hover = null, selected = null;
   let view = { scale: 1, x: 0, y: 0 }, dragging = false, dragFrom = null, moved = false;
-  const COLORS = { entity: "#2563eb", topic: "#db2777" };
+  function css(name, fallback) {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  }
+  const COLORS = { entity: css("--lav", "#6b5fc4"), topic: css("--rose", "#9c5f74") };
+  const INK = { dim: css("--ink-2", "#6f6a5f"), faint: css("--ink-3", "#9a948a"),
+    paper: css("--bg-soft", "#fbf8f1"), gold: css("--gold", "#a67c2e") };
 
   function resize() {
     const ratio = window.devicePixelRatio || 1;
@@ -291,8 +374,21 @@ _CANVAS_JS = r"""
       }
     }
     fit();
-    meta.textContent = nodes.length + " 个节点 · " + edges.length + " 条边（共 " + data.total_nodes + " 个节点，可缩小窗口按提及数取前 N）";
+    meta.textContent = nodes.length + " 个节点 · " + edges.length + " 条边 · 全图 " + data.total_nodes + " 节点";
+    fillLegend();
     draw();
+  }
+
+  function fillLegend() {
+    const legend = document.getElementById("kb-legend");
+    if (!legend) return;
+    const entities = nodes.filter(function (n) { return n.kind === "entity"; }).length;
+    const topics = nodes.filter(function (n) { return n.kind === "topic"; }).length;
+    legend.innerHTML =
+      '<span><i style="background:' + COLORS.entity + '"></i>实体节点 ' + entities + "</span>" +
+      '<span><i style="background:' + COLORS.topic + '"></i>主题节点 ' + topics + "</span>" +
+      '<span><i class="line" style="background:rgba(166,124,46,.5)"></i>共现 / 互链边 ' + edges.length + "</span>" +
+      '<span class="muted">节点大小 ≈ 提及报告数</span>';
   }
 
   function fit() {
@@ -314,7 +410,7 @@ _CANVAS_JS = r"""
   function draw() {
     const rect = canvas.getBoundingClientRect();
     ctx.clearRect(0, 0, rect.width, rect.height);
-    ctx.fillStyle = getComputedStyle(document.body).backgroundColor || "#fff";
+    ctx.fillStyle = INK.paper;
     ctx.fillRect(0, 0, rect.width, rect.height);
     const pos = {};
     nodes.forEach(function (n) { pos[n.slug] = toScreen(n); });
@@ -322,35 +418,55 @@ _CANVAS_JS = r"""
     edges.forEach(function (e) {
       const a = pos[e.source], b = pos[e.target]; if (!a || !b) return;
       const hot = focus && (e.source === focus.slug || e.target === focus.slug);
-      ctx.strokeStyle = hot ? "rgba(37,99,235,.45)" : "rgba(120,120,140,.16)";
-      ctx.lineWidth = hot ? 1.4 : Math.min(2, 0.5 + Math.log2(1 + (e.weight || 1)) * 0.25);
+      const cool = !focus || hot;
+      ctx.strokeStyle = hot ? "rgba(166,124,46,.6)" : (cool ? "rgba(92,88,80,.22)" : "rgba(92,88,80,.08)");
+      ctx.lineWidth = hot ? 1.5 : Math.min(2, 0.5 + Math.log2(1 + (e.weight || 1)) * 0.3);
       ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
     });
     const drawnLabels = [];
+    let labelBudget = 30;
     nodes.forEach(function (n) {
       const p = pos[n.slug], r = radius(n);
       const dim = focus && focus.slug !== n.slug && !(edges.some(function (e) { return (e.source === focus.slug && e.target === n.slug) || (e.target === focus.slug && e.source === n.slug); }));
-      ctx.globalAlpha = dim ? 0.4 : 1;
+      ctx.globalAlpha = dim ? 0.45 : 1;
       ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      const focusThis = !!(focus && focus.slug === n.slug);
+      ctx.save();
+      ctx.shadowColor = (n.kind === "topic" ? "rgba(156,95,116,.45)" : "rgba(107,95,196,.4)");
+      ctx.shadowBlur = focusThis ? 18 : (n.report_count || 0) >= 8 ? 10 : 5;
       ctx.fillStyle = COLORS[n.kind] || "#6b7280"; ctx.fill();
-      if (focus && focus.slug === n.slug) { ctx.strokeStyle = "#111"; ctx.lineWidth = 2; ctx.stroke(); }
-      const wantsLabel = (n.report_count || 0) >= 8 || (focus && focus.slug === n.slug);
+      ctx.restore();
+      if (focusThis) {
+        ctx.beginPath(); ctx.arc(p.x, p.y, r + 4, 0, Math.PI * 2);
+        ctx.strokeStyle = INK.gold; ctx.lineWidth = 1.6; ctx.stroke();
+      } else if ((n.report_count || 0) >= 30) {
+        ctx.beginPath(); ctx.arc(p.x, p.y, r + 3, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(166,124,46,.35)"; ctx.lineWidth = 1; ctx.stroke();
+      }
+      const wantsLabel = (n.report_count || 0) >= 20 || focusThis;
       if (wantsLabel) {
         const label = (n.title || n.slug).slice(0, 14);
-        ctx.font = "11px system-ui, sans-serif";
+        ctx.font = "12px 'Songti SC', 'Noto Serif SC', Georgia, serif";
         const width = ctx.measureText(label).width;
-        const box = { x: p.x + r + 3, y: p.y - 7, w: width, h: 14 };
+        const box = { x: p.x + r + 4, y: p.y - 8, w: width, h: 16 };
         const clash = drawnLabels.some(function (b) {
           return box.x < b.x + b.w && b.x < box.x + box.w && box.y < b.y + b.h && b.y < box.y + box.h;
         });
-        if (!clash || (focus && focus.slug === n.slug)) {
-          ctx.fillStyle = "#4b5563";
-          ctx.fillText(label, box.x, p.y + 3);
+        if (labelBudget > 0 && (!clash || focusThis)) {
+          labelBudget -= 1;
+          ctx.fillStyle = INK.dim;
+          ctx.fillText(label, box.x, p.y + 4);
           drawnLabels.push(box);
         }
       }
       ctx.globalAlpha = 1;
     });
+    if (selected) {
+      const badge = nodes.length + " 个节点 · " + edges.length + " 条边";
+      ctx.fillStyle = INK.faint;
+      ctx.font = "11px system-ui, sans-serif";
+      ctx.fillText(badge, 14, rect.height - 14);
+    }
   }
 
   function pick(event) {
@@ -417,29 +533,23 @@ _CANVAS_JS = r"""
 @router.get("/graph/canvas", response_class=HTMLResponse)
 def graph_canvas_html(request: Request):
     prefix = _prefix(request)
-    style = (
-        "<style>"
-        "#kb-canvas{width:100%;height:calc(100vh - 170px);min-height:420px;display:block;"
-        "background:var(--panel);border:1px solid var(--border);border-radius:12px;cursor:grab}"
-        ".kb-canvas-bar{display:flex;gap:10px;align-items:center;margin:10px 0 8px}"
-        ".kb-canvas-bar input{flex:0 0 220px}"
-        "#kb-panel{min-height:100px}"
-        "</style>"
-    )
     body = (
-        "<h1>图谱画布</h1>"
-        '<div class="nav">圆点=节点（蓝=实体，粉=主题），线=共现/互链关系；'
-        '滚轮缩放、拖拽平移、点节点看详情。 '
-        f'<a href="{prefix}/graph/">← 回到节点索引</a></div>'
-        '<div class="kb-canvas-bar"><input id="kb-search" placeholder="过滤节点…">'
+        '<p class="eyebrow">Graph studio<span>可视化画布 · 本地力导向</span></p>'
+        "<h1>看清楚，链接往哪里生长。</h1>"
+        '<p class="lead">滚轮缩放、拖拽平移、输入过滤；点节点看详情与相关节点。'
+        f'<a href="{prefix}/graph/">回到节点索引 →</a></p>'
+        '<div class="panel canvas-wrap">'
+        '<div class="canvas-bar"><input id="kb-search" placeholder="过滤节点…">'
         '<button id="kb-refit">重新布局</button>'
-        '<span id="kb-meta" style="font-size:12px;opacity:.7"></span></div>'
+        '<span id="kb-meta"></span></div>'
         '<canvas id="kb-canvas"></canvas>'
-        '<div id="kb-panel"></div>'
+        '<div id="kb-legend" class="legend"></div>'
+        "</div>"
+        '<div class="panel" id="kb-panel">点一个节点，这里显示它的类型、提及报告数与相关节点。</div>'
         f"<script>window.__KB_PREFIX__={prefix!r};</script>"
         f"<script>{_CANVAS_JS}</script>"
     )
-    return HTMLResponse(_shell("图谱画布", style + body, prefix))
+    return HTMLResponse(_shell("图谱画布", body, prefix))
 
 
 @router.get("/graph/{slug:path}", response_class=HTMLResponse)

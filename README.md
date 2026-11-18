@@ -488,6 +488,8 @@ AI 问答与周报要调模型（单次 20–40s），host 半对 `/kb/api/kb/as
 | `22-graph-canvas.png` | 图谱可视化画布（140 节点 / 831 条边，两块主题簇：Minecraft 与 A 股） |
 | `23-dsh-search-wiki.png` | DSH 面板内搜索「资金流向」混排 LLM Wiki 文章与图谱节点卡片 |
 | `24-search-mixed.png` | 同一搜索的独立页面版（侧栏计数与结果数一致，未读/收藏显示为「—」） |
+| `25-graph-index-studio.png` | 图谱索引（编辑排版：指标条 + 图例 + 双栏节点列表） |
+| `26-graph-canvas-studio.png` | 图谱画布（暖纸底 + 金/薰衣草/玫瑰配色，两簇：Minecraft 谱系与 A 股） |
 
 语法门：`node --check lib/index.js && node --check client.js && node --check verification/verify-app.mjs && node --check verification/verify-proxy.mjs`；
 Python 用 `/usr/bin/python3.11 -m py_compile $(find server -name '*.py')`。
@@ -519,6 +521,13 @@ basic-memory 等 11 个实现后，结论是本项目的缺口不在 RAG 引擎�
 **已知取舍**：页正文目前是确定性模板（AI 润色字段 `generated_by/model` 已预留）；
 别名归并只按「空白/大小写」折叠，`Mojang` 与 `Mojang Studios` 仍会各建一页（
 后续用 `tag_aliases` 同款机制合并）；实体关系表（`entity_edges`）与主题页按清单排在 P11。
+
+## 图谱视觉风格（借鉴 betterlife Neural Studio）
+
+节点页、索引页与可视化画布采用与 betterlife `app/domains/neural`（Neural Studio）同源的气质：
+暖纸底（`#f6f2e8`）+ 深墨字 + 香槟金强调色，衬线体标题与字母间距放大的小标签（eyebrow），
+玻璃质感卡片、圆形色点图例与数字指标条；暗色模式自动切换到炭黑底 + 金色/薰衣草/薄荷配色。
+节点色沿用其 KINDS 语义：实体＝薰衣草紫、主题＝玫瑰粉，边用低对比暖灰，hover/选中时点亮为金色。
 
 ## 图谱第三路召回与检索评测（P11）
 
