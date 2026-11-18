@@ -116,11 +116,20 @@ try {
     check('分类列表渲染', cats === tree.categories.length + 1, `${cats} vs ${tree.categories.length + 1}`)
 
     await frame.fill('#kb-search', '铝业')
-    await page.waitForTimeout(900)
+    // 首次混合检索会懒加载本地向量模型，给足时间（后续查询 <100ms）
+    await frame.waitForFunction(
+      () => document.querySelectorAll('.kb-item mark').length > 0,
+      null,
+      { timeout: 30000 },
+    ).catch(() => {})
     const marks = await frame.locator('.kb-item mark').count()
     check('iframe 内搜索「铝业」并有高亮', marks > 0, `marks=${marks}`)
     await frame.fill('#kb-search', 'zzz-no-such-keyword')
-    await page.waitForTimeout(900)
+    await frame.waitForFunction(
+      () => document.querySelector('#kb-result')?.textContent?.includes('没有结果'),
+      null,
+      { timeout: 15000 },
+    ).catch(() => {})
     const emptyLabel = await frame.locator('#kb-result').innerText()
     check('P0-1 真实面板：垃圾词返回「没有结果」', emptyLabel.includes('没有结果'), emptyLabel)
     await frame.click('#kb-search-clear')
@@ -208,12 +217,34 @@ try {
     await frame.click('#kb-ask-entry')
     await frame.waitForSelector('#kb-ask:not(.bl-hidden)', { timeout: 10000 })
     await frame.fill('#kb-ask-input', '最近市场全景报告里有哪些风险信号？')
+    const askStarted = Date.now()
     await frame.click('#kb-ask-submit')
-    await frame.waitForSelector('#kb-ask-result .kb-ask-answer, #kb-ask-result .kb-ask-error', { timeout: 120000 })
+    // 流式：先出「资料速览」（引用已定），答案随后逐段到达
+    await frame.waitForSelector('#kb-ask-result .kb-ask-brief', { timeout: 30000 })
+    const briefMs = Date.now() - askStarted
+    const briefCount = await frame.locator('#kb-ask-result .kb-ask-brief li').count()
+    check('iframe 内 AI 问答先给出资料来源（<5s）', briefMs < 5000 && briefCount > 0,
+      `brief=${briefMs}ms cites=${briefCount}`)
+    await frame.waitForSelector('#kb-ask-result .kb-ask-answer, #kb-ask-result .kb-ask-error', { timeout: 150000 })
+    await frame.waitForFunction(
+      () => {
+        const node = document.querySelector('#kb-ask-result .kb-ask-answer')
+        return !!node && (node.textContent || '').trim().length > 80
+      },
+      null,
+      { timeout: 150000 },
+    )
+    // 流式：最终态才有 .kb-ask-cites；流式过程中引用在「资料速览」里
+    await frame.waitForFunction(
+      () => document.querySelectorAll('#kb-ask-result .kb-ask-cites li').length > 0,
+      null,
+      { timeout: 150000 },
+    )
     const askText = (await frame.locator('#kb-ask-result').innerText()).trim()
     const citeCount = await frame.locator('#kb-ask-result .kb-ask-cites li').count()
-    check('iframe 内 AI 问答返回答案与引用', askText.length > 80 && citeCount > 0,
-      `len=${askText.length} cites=${citeCount}`)
+    const askHint = (await frame.locator('#kb-ask-hint').innerText()).trim()
+    check('iframe 内 AI 问答流式返回答案与引用', askText.length > 80 && citeCount > 0 && /首字/.test(askHint),
+      `len=${askText.length} cites=${citeCount} hint=${askHint.slice(0, 40)}`)
     await page.screenshot({ path: join(OUT, '10-dsh-ask.png'), fullPage: true })
 
     // P5：周报面板（iframe 内）
@@ -301,9 +332,18 @@ try {
     await graphFrame.goto(`${new globalThis.URL(URL).origin}/kb/`, { waitUntil: 'domcontentloaded' })
     await graphFrame.waitForSelector('#kb-search', { timeout: 15000 })
     await graphFrame.fill('#kb-search', '资金流向')
-    await page.waitForTimeout(2200)
-    const wikiCards = await graphFrame.locator('.kb-badge-wiki').count()
-    const articleCards = await graphFrame.locator('.kb-item-doc').count()
+    // 搜索防抖 250ms + 混合检索（含文章/节点）；给足渲染时间，必要时重试一次
+    let wikiCards = 0
+    let articleCards = 0
+    for (let attempt = 0; attempt < 3 && wikiCards + articleCards === 0; attempt++) {
+      await page.waitForTimeout(2500)
+      wikiCards = await graphFrame.locator('.kb-badge-wiki').count()
+      articleCards = await graphFrame.locator('.kb-item-doc').count()
+      if (wikiCards + articleCards === 0) {
+        await graphFrame.fill('#kb-search', '')
+        await graphFrame.fill('#kb-search', '资金流向')
+      }
+    }
     check('搜索混排 LLM Wiki 文章卡片', wikiCards > 0 || articleCards > 0,
       `wikiBadges=${wikiCards} docCards=${articleCards}`)
     await page.screenshot({ path: join(OUT, '23-dsh-search-wiki.png'), fullPage: true })

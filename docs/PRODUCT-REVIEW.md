@@ -222,7 +222,7 @@ Sprint A（P0）已落地并验收，记录在此以免计划文档与现实脱�
 | P1-3 计数语义 | 已完成 | 搜索态「搜索结果」+ 分类「—」+ 分页口径文案；`verify-app` 新增 3 条断言 |
 | P1-4 Wiki 按钮收敛 | 已完成 | 索引页仅过期文章保留重新生成；116 卡 → 0 常驻按钮 |
 
-验收基线：`pytest` 68、`verify-app` 131/131、`verify-proxy` 11/11、`verify-dsh` 33/33。
+验收基线：`pytest` 72、`verify-app` 132/132、`verify-proxy` 11/11、`verify-dsh` 34/34。
 
 Sprint C 执行结果（P2）：
 - P2-1 公开页导航与筛选：标题栏 + 分类 chip + 阅读时长 + 同步页脚 ✅

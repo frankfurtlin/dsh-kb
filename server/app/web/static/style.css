@@ -1190,3 +1190,25 @@ button.kb-tag:hover { text-decoration: underline; }
 .kb-help-row dt { font-family: ui-monospace, SFMono-Regular, monospace; color: var(--kb-text-2, #5b5548); }
 .kb-help-row dd { margin: 0; text-align: right; }
 .kb-help-foot { margin: 12px 0 0; font-size: 12px; color: var(--kb-text-2, #5b5548); }
+
+/* 流式问答：光标与占位（P3） */
+.kb-ask-live { min-height: 2.4em; }
+.kb-ask-pending { color: var(--kb-text-3); font-size: 12.5px; }
+.kb-caret {
+  display: inline-block;
+  width: 7px;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: -0.12em;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--kb-accent) 72%, transparent);
+  animation: kbCaret 1s steps(2, start) infinite;
+}
+@keyframes kbCaret { 0%, 60% { opacity: 1; } 61%, 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .kb-caret { animation: none; } }
+
+/* 流式问答：资料速览（P3） */
+.kb-ask-brief { margin: 4px 0 12px; padding: 10px 12px; border: 1px solid var(--kb-border); border-radius: 12px; background: var(--kb-panel-2); }
+.kb-ask-brief ul { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.kb-ask-brief li { display: block; font-size: 12.5px; color: var(--kb-text-2); }
+.kb-brief-sum { display: block; margin-top: 2px; color: var(--kb-text-3); line-height: 1.5; }

@@ -141,6 +141,68 @@ def _pace() -> None:
         _last_request_at = time.monotonic()
 
 
+def _stream_url() -> str:
+    base = config.AI_URL.rstrip("/")
+    if base.endswith("/ai"):
+        return base + "/stream"
+    return base + "/ai/stream"
+
+
+def chat_stream(system: str, user: str, *, max_tokens: int | None = None, temperature: float = 0.1):
+    """流式调用模型：逐段 yield (kind, payload)。
+
+    kind 取值：thinking（已思考字数）/ delta（text）/ done（{provider, model}）/ error（error）。
+    生成器内部吞掉 HTTP 异常并转成 KBAIError，由调用方决定如何提示。
+    """
+    if not is_configured():
+        raise KBAIError("AI 未配置：缺少 DSH AI 桥密钥（server/.ai-secret）")
+    payload = {
+        "system": system,
+        "user": user,
+        "max_tokens": max_tokens or config.AI_MAX_TOKENS,
+    }
+    if temperature is not None and temperature != 0.1:
+        payload["temperature"] = temperature
+    _pace()
+    try:
+        with httpx.stream(
+            "POST", _stream_url(), json=payload, headers=_headers(), timeout=config.AI_TIMEOUT
+        ) as response:
+            if response.status_code == 404:
+                raise KBAIError("AI 桥未就绪：DSH 插件未加载或密钥不匹配")
+            if response.status_code != 200:
+                response.read()
+                raise KBAIError(f"AI 桥返回 HTTP {response.status_code}：{response.text[:200]}")
+            event = ""
+            for raw_line in response.iter_lines():
+                line = raw_line.rstrip("\r")
+                if line.startswith("event: "):
+                    event = line[7:].strip()
+                    continue
+                if not line.startswith("data: "):
+                    continue
+                try:
+                    data = json.loads(line[6:])
+                except ValueError:
+                    continue
+                if event == "delta":
+                    text = str(data.get("text") or "")
+                    if text:
+                        yield ("delta", text)
+                elif event == "thinking":
+                    try:
+                        chars = int(data.get("chars") or 0)
+                    except (TypeError, ValueError):
+                        chars = 0
+                    yield ("thinking", chars)
+                elif event == "done":
+                    yield ("done", data)
+                elif event == "error":
+                    raise KBAIError(str(data.get("error") or "流式调用失败")[:200])
+    except httpx.HTTPError as exc:
+        raise KBAIError(f"AI 桥请求失败：{exc}") from exc
+
+
 def chat_json(
     system: str,
     user: str,

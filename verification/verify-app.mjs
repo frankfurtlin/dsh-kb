@@ -278,6 +278,8 @@ async function main() {
       hybrid.status === 200 && hybrid.json?.total > 0 && ['hybrid', 'lexical'].includes(hybrid.json?.mode),
       `mode=${hybrid.json?.mode} total=${hybrid.json?.total}`)
     const ask = await api('/api/kb/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: '测试' }) })
+    const askStream = await api('/api/kb/ask/stream', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: '测试' }) })
+    check('AI 未配置时流式问答返回 503', askStream.status === 503, `status=${askStream.status}`)
     check('P3 问答在未配置模型时返回结构化错误',
       ask.status === 503 || ask.json?.ok === false, `status=${ask.status}`)
     const digest = await api('/api/kb/digest?days=90')

@@ -1159,49 +1159,170 @@ async function kbAskSubmit() {
 
   var controller = new AbortController();
   _kbAskAbort = controller;
-  var data = null;
+  var startedAt = Date.now();
+  var firstByteAt = 0;
+  var streamed = '';
+  var citations = [];
+  var related = [];
+  var mode = '';
+  var payloadError = '';
+  var streamOk = false;
+
+  function renderStream(final) {
+    if (final) {
+      kbAskRender('<div class="kb-ask-answer">' + kbAskFormat(streamed) + '</div>' +
+        kbAskCiteList(citations, true) + kbAskRelatedList(related));
+      return;
+    }
+    var body = streamed ? kbAskFormat(streamed) : '<span class="kb-ask-pending">模型正在读取片段…</span>';
+    if (streamed) body += '<span class="kb-caret" aria-hidden="true"></span>';
+    var brief = '';
+    if (citations.length) {
+      brief = '<div class="kb-ask-brief"><div class="kb-ask-cites-head">资料速览 · 已锁定 ' +
+        citations.length + ' 篇来源</div><ul>' +
+        citations.map(function (cite) {
+          return '<li><span class="kb-cite-n">[' + cite.n + ']</span>' +
+            '<button type="button" class="kb-linkbtn" onclick="kbOpenPath(\'' + escAttr(cite.path) + '\')">' +
+            esc(cite.title) + '</button>' +
+            (cite.summary ? '<span class="kb-brief-sum">' + esc(cite.summary) + '</span>' : '') + '</li>';
+        }).join('') + '</ul></div>';
+    }
+    kbAskRender(brief + '<div class="kb-ask-answer kb-ask-live">' + body + '</div>');
+  }
+
   try {
-    var response = await fetch(API + '/kb/ask', {
+    var response = await fetch(API + '/kb/ask/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question: question }),
       signal: controller.signal,
     });
-    data = await response.json().catch(function () { return null; });
+    if (!response.ok || !response.body) {
+      var failData = await response.json().catch(function () { return null; });
+      payloadError = (failData && failData.error) || ('HTTP ' + response.status);
+    } else {
+      var reader = response.body.getReader();
+      var decoder = new TextDecoder();
+      var buffer = '';
+      while (true) {
+        var chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, { stream: true });
+        var index;
+        while ((index = buffer.indexOf('\n\n')) >= 0) {
+          var frame = buffer.slice(0, index);
+          buffer = buffer.slice(index + 2);
+          var event = 'message';
+          var raw = '';
+          frame.split('\n').forEach(function (line) {
+            if (line.indexOf('event: ') === 0) event = line.slice(7).trim();
+            else if (line.indexOf('data: ') === 0) raw += line.slice(6);
+          });
+          if (!raw) continue;
+          var payload = null;
+          try { payload = JSON.parse(raw); } catch (parseError) { continue; }
+          if (event === 'citations') {
+            citations = payload.citations || [];
+            related = payload.related || [];
+            mode = payload.mode || '';
+            renderStream(false);
+          } else if (event === 'thinking') {
+            if (hint) {
+              hint.textContent = '已用 ' + secondsSince(startedAt) + ' 秒 · 模型正在思考（已 ' +
+                (payload.chars || 0) + ' 字，答案马上开始输出）';
+            }
+          } else if (event === 'delta') {
+            if (!firstByteAt) firstByteAt = Date.now();
+            streamed += payload.text || '';
+            if (hint) {
+              hint.textContent = '已用 ' + secondsSince(startedAt) + ' 秒 · 正在接收答案（首字 ' +
+                (firstByteAt ? ((firstByteAt - startedAt) / 1000).toFixed(1) : '—') + ' 秒）';
+            }
+            renderStream(false);
+          } else if (event === 'done') {
+            streamed = payload.answer || streamed;
+            streamOk = true;
+          } else if (event === 'empty') {
+            streamed = payload.answer || '';
+            streamOk = true;
+          } else if (event === 'error') {
+            payloadError = payload.error || '问答失败';
+          }
+        }
+      }
+    }
   } catch (error) {
     if (error && error.name === 'AbortError') return;
-    data = null;
+    payloadError = (error && error.message) || '请求失败';
   }
   if (controller.signal.aborted) return;
+
+  // 流式失败（例如桥未更新）时退回一次性接口，保证功能不退化。
+  if (!streamOk && !streamed) {
+    try {
+      var fallback = await fetch(API + '/kb/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: question }),
+        signal: controller.signal,
+      });
+      var data = await fallback.json();
+      if (controller.signal.aborted) return;
+      kbAskResetControls();
+      if (!data || !data.ok) {
+        kbAskRender('<p class="kb-ask-error">' + esc((data && data.error) || payloadError || '问答失败') + '</p>');
+        return;
+      }
+      streamed = data.answer || '';
+      citations = data.citations || [];
+      related = data.related || [];
+      streamOk = true;
+    } catch (fallbackError) {
+      if (fallbackError && fallbackError.name === 'AbortError') return;
+    }
+  }
+
   kbAskResetControls();
-  var seconds = Math.max(1, Math.round((Date.now() - _kbAskStartedAt) / 1000));
-  if (!data) { kbAskRender('<p class="kb-ask-error">请求失败，请稍后重试（已用 ' + seconds + ' 秒）。</p>'); return; }
-  if (!data.ok) {
-    kbAskRender('<p class="kb-ask-error">' + esc(data.error || '问答失败') + '（已用 ' + seconds + ' 秒）</p>');
+  var seconds = secondsSince(startedAt);
+  var hint2 = kbEl('kb-ask-hint');
+  if (hint2) {
+    hint2.textContent = streamOk
+      ? '用时 ' + seconds + ' 秒 · 首字 ' + (firstByteAt ? ((firstByteAt - startedAt) / 1000).toFixed(1) : '—') +
+        ' 秒 · 答案只依据引用的报告'
+      : '请求失败（已用 ' + seconds + ' 秒）';
+  }
+  if (!streamOk) {
+    kbAskRender('<p class="kb-ask-error">' + esc(payloadError || '问答失败') + '（已用 ' + seconds + ' 秒）</p>');
     return;
   }
-  var hint2 = kbEl('kb-ask-hint');
-  if (hint2) hint2.textContent = '用时 ' + seconds + ' 秒 · 答案只依据引用的报告';
-  var html = '<div class="kb-ask-answer">' + kbAskFormat(data.answer || '') + '</div>';
-  var citations = data.citations || [];
-  if (citations.length) {
-    html += '<div class="kb-ask-cites"><div class="kb-ask-cites-head">来源</div><ul>' +
-      citations.map(function (cite) {
-        return '<li><span class="kb-cite-n">[' + cite.n + ']</span>' +
-          '<button type="button" class="kb-linkbtn" onclick="kbOpenPath(\'' + escAttr(cite.path) + '\')">' +
-          esc(cite.title) + '</button>' +
-          (cite.date ? ' <time>' + kbFmtDate(cite.date) + '</time>' : '') + '</li>';
-      }).join('') + '</ul></div>';
-  }
-  var related = data.related || [];
-  if (related.length) {
-    html += '<div class="kb-ask-related"><div class="kb-ask-cites-head">相关报告</div><ul>' +
-      related.map(function (item) {
-        return '<li><button type="button" class="kb-linkbtn" onclick="kbOpenPath(\'' + escAttr(item.path) + '\')">' +
-          esc(item.title) + '</button>' + (item.date ? ' <time>' + kbFmtDate(item.date) + '</time>' : '') + '</li>';
-      }).join('') + '</ul></div>';
-  }
+  var html = '<div class="kb-ask-answer">' + kbAskFormat(streamed) + '</div>' +
+    kbAskCiteList(citations, true) + kbAskRelatedList(related);
   kbAskRender(html);
+}
+
+function secondsSince(start) {
+  return Math.max(1, Math.round((Date.now() - start) / 1000));
+}
+
+function kbAskCiteList(citations, final) {
+  if (!citations || !citations.length) return '';
+  var head = final ? '来源' : '来源（已确定，答案生成中）';
+  return '<div class="kb-ask-cites"><div class="kb-ask-cites-head">' + head + '</div><ul>' +
+    citations.map(function (cite) {
+      return '<li><span class="kb-cite-n">[' + cite.n + ']</span>' +
+        '<button type="button" class="kb-linkbtn" onclick="kbOpenPath(\'' + escAttr(cite.path) + '\')">' +
+        esc(cite.title) + '</button>' +
+        (cite.date ? ' <time>' + kbFmtDate(cite.date) + '</time>' : '') + '</li>';
+    }).join('') + '</ul></div>';
+}
+
+function kbAskRelatedList(related) {
+  if (!related || !related.length) return '';
+  return '<div class="kb-ask-related"><div class="kb-ask-cites-head">相关报告</div><ul>' +
+    related.map(function (item) {
+      return '<li><button type="button" class="kb-linkbtn" onclick="kbOpenPath(\'' + escAttr(item.path) + '\')">' +
+        esc(item.title) + '</button>' + (item.date ? ' <time>' + kbFmtDate(item.date) + '</time>' : '') + '</li>';
+    }).join('') + '</ul></div>';
 }
 
 // ---------- P5：周报 / 主题聚合 ----------

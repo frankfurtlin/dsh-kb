@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import json
+import logging
+
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app import config
 from app.services import (kb_ai, kb_ask, kb_classify, kb_digest as kb_digest_service, kb_embed,
                           kb_enrich, kb_public, kb_search as kb_search_service, kb_store)
+
+logger = logging.getLogger("dsh-kb.routes")
 
 router = APIRouter(prefix="/api")
 
@@ -130,6 +135,32 @@ def kb_ask_question(body: KbAskBody) -> dict:
     if not kb_ai.is_configured():
         return _error(503, "AI 未配置：缺少 DSH AI 桥密钥（server/.ai-secret）")
     return kb_ask.answer(body.question, limit=max(1, min(6, int(body.limit or 6))))
+
+
+@router.post("/kb/ask/stream")
+def kb_ask_stream(body: KbAskBody):
+    """流式 RAG 问答（SSE）：先 citations，再逐段 delta，最后 done。
+
+    前端用 fetch + ReadableStream 消费；不支持流式的客户端可以继续用 /api/kb/ask。
+    """
+    if not kb_ai.is_configured():
+        return _error(503, "AI 未配置：缺少 DSH AI 桥密钥（server/.ai-secret）")
+    limit = max(1, min(6, int(body.limit or 6)))
+
+    def event_stream():
+        try:
+            for kind, payload in kb_ask.answer_stream(body.question, limit=limit):
+                data = json.dumps(payload, ensure_ascii=False)
+                yield f"event: {kind}\ndata: {data}\n\n"
+        except Exception as exc:  # noqa: BLE001 - 流式响应里只能把错误写成事件
+            logger.warning("流式问答异常：%s", exc)
+            yield 'event: error\ndata: {"error": "服务端异常，请稍后重试"}\n\n'
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"cache-control": "no-cache", "x-accel-buffering": "no"},
+    )
 
 
 class KbEmbedBody(BaseModel):

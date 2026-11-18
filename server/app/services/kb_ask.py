@@ -30,7 +30,8 @@ _SYSTEM = (
 )
 
 
-def answer(question: str, *, limit: int = _MAX_CITATIONS) -> dict:
+def _prepare(question: str, *, limit: int = _MAX_CITATIONS, context_chars: int = _CONTEXT_CHARS) -> dict:
+    """检索证据并拼出模型提示词；返回 {ok} 或 {ok:True, prompt, citations, related, mode}。"""
     text = (question or "").strip()
     if not text:
         return {"ok": False, "error": "问题不能为空"}
@@ -52,6 +53,7 @@ def answer(question: str, *, limit: int = _MAX_CITATIONS) -> dict:
     if not items:
         return {
             "ok": True,
+            "empty": True,
             "answer": "知识库里暂时没有检索到与这个问题相关的报告。",
             "citations": [],
             "related": [],
@@ -118,26 +120,30 @@ def answer(question: str, *, limit: int = _MAX_CITATIONS) -> dict:
             f"摘要：{summary}\n正文摘录：{preview}"
         )
 
+    summaries = {
+        str(it.get("path") or ""): str(
+            it.get("summary_ai") or it.get("summary") or it.get("overview") or ""
+        )[:180]
+        for it in items
+    }
+    for cite in citations:
+        cite["summary"] = summaries.get(str(cite.get("path") or ""), "")
+
     prompt = (
         "报告片段：\n\n" + "\n\n".join(blocks) + f"\n\n用户问题：{text}\n\n"
         f"请依据以上片段回答（最多 {_MAX_CITATIONS} 个来源），只输出 JSON。"
     )
-    try:
-        raw = kb_ai.chat_json(_SYSTEM, prompt)
-    except kb_ai.KBAIError as exc:
-        logger.warning("问答失败：%s", exc)
-        return {"ok": False, "error": f"模型调用失败：{exc}"}
-    answer_text = str(raw.get("answer") or "").strip()
-    if not answer_text:
-        return {"ok": False, "error": "模型没有返回答案"}
     related = [
         {
             "title": item["title"],
             "path": item["path"],
             "url": item.get("url") if item.get("kind") == "node" else f"reports/{item['path']}",
             "date": item.get("date", ""),
-            "category": (f"图谱 · {item.get('entity_type')}" if item.get("kind") == "node"
-                         else item.get("category", "")),
+            "category": (
+                f"图谱 · {item.get('entity_type')}"
+                if item.get("kind") == "node"
+                else item.get("category", "")
+            ),
             "summary": item.get("summary_ai") or item.get("summary") or "",
             "kind": item.get("kind", "report"),
         }
@@ -145,9 +151,83 @@ def answer(question: str, *, limit: int = _MAX_CITATIONS) -> dict:
     ]
     return {
         "ok": True,
-        "answer": answer_text,
+        "prompt": prompt,
         "citations": citations,
         "related": related,
         "mode": result["mode"],
+    }
+
+
+def answer(question: str, *, limit: int = _MAX_CITATIONS) -> dict:
+    """一次性问答：返回完整答案与引用。"""
+    prepared = _prepare(question, limit=limit)
+    if not prepared.get("ok"):
+        return prepared
+    if prepared.get("empty"):
+        return prepared
+    try:
+        raw = kb_ai.chat_json(_SYSTEM, prepared["prompt"])
+    except kb_ai.KBAIError as exc:
+        logger.warning("问答失败：%s", exc)
+        return {"ok": False, "error": f"模型调用失败：{exc}"}
+    answer_text = str(raw.get("answer") or "").strip()
+    if not answer_text:
+        return {"ok": False, "error": "模型没有返回答案"}
+    return {
+        "ok": True,
+        "answer": answer_text,
+        "citations": prepared["citations"],
+        "related": prepared["related"],
+        "mode": prepared["mode"],
         "model": kb_ai.model_label(),
     }
+
+
+_STREAM_SYSTEM = (
+    "你是个人知识库的问答助手。只依据用户提供的报告片段回答问题，不要引入片段之外的事实。"
+    "直接用中文分点作答（3-6 点），每条结论末尾用 [n] 标注来源编号，使用 Markdown 列表。"
+    "如果片段不足以回答，就直接说明缺少哪些信息。不要输出 JSON，不要用代码块包裹。"
+)
+
+
+def answer_stream(question: str, *, limit: int = 4, context_chars: int = 700):
+    """流式问答：先 citations，再 delta 文本，最后 done。
+
+    模型这里不要求 JSON：直接让模型写 Markdown 列表，前端边收边渲染，
+    首字延迟从十几秒降到 1–2 秒（取决于模型首 token 时间）。
+    """
+    prepared = _prepare(question, limit=limit, context_chars=context_chars)
+    if not prepared.get("ok"):
+        yield ("error", {"error": str(prepared.get("error") or "问答失败")})
+        return
+    if prepared.get("empty"):
+        yield ("empty", {"answer": prepared["answer"]})
+        return
+    yield (
+        "citations",
+        {
+            "citations": prepared["citations"],
+            "related": prepared["related"],
+            "mode": prepared["mode"],
+            "model": kb_ai.model_label(),
+        },
+    )
+    collected: list[str] = []
+    try:
+        for kind, payload in kb_ai.chat_stream(_STREAM_SYSTEM, prepared["prompt"]):
+            if kind == "thinking":
+                yield ("thinking", {"chars": payload})
+            elif kind == "delta":
+                collected.append(str(payload))
+                yield ("delta", {"text": str(payload)})
+            elif kind == "done":
+                break
+    except kb_ai.KBAIError as exc:
+        logger.warning("流式问答失败：%s", exc)
+        yield ("error", {"error": f"模型调用失败：{exc}"})
+        return
+    answer_text = "".join(collected).strip()
+    if not answer_text:
+        yield ("error", {"error": "模型没有返回答案"})
+        return
+    yield ("done", {"answer": answer_text, "model": kb_ai.model_label()})
