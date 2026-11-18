@@ -443,7 +443,36 @@ _CANVAS_JS = r"""
 
   function radius(n) { return Math.max(3.5, Math.min(16, 3 + Math.log2(1 + (n.report_count || 1)) * 2.2)); }
 
-  function draw() {
+  let hoverSince = 0, pulses = [], raf = 0;
+
+  function ctrlPoint(a, b, e) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    const bow = Math.min(34, len * 0.14);
+    const sign = (e.source + e.target).length % 2 === 0 ? 1 : -1;
+    return { x: (a.x + b.x) / 2 - (dy / len) * bow * sign,
+             y: (a.y + b.y) / 2 + (dx / len) * bow * sign };
+  }
+
+  function firePulse(slug) {
+    pulses.push({ from: slug, t0: performance.now(), dur: 900 });
+    kick();
+  }
+
+  function kick() {
+    if (!raf) raf = requestAnimationFrame(tick);
+  }
+
+  function tick() {
+    raf = 0;
+    const now = performance.now();
+    pulses = pulses.filter(function (p) { return now - p.t0 < p.dur; });
+    draw(now);
+    if (pulses.length || hover) kick();
+  }
+
+  function draw(now) {
+    const t = now || performance.now();
     const rect = canvas.getBoundingClientRect();
     ctx.clearRect(0, 0, rect.width, rect.height);
     if (ORB.complete && ORB.naturalWidth) {
@@ -467,15 +496,33 @@ _CANVAS_JS = r"""
       const cool = !focus || hot;
       ctx.strokeStyle = hot ? "rgba(166,124,46,.6)" : (cool ? "rgba(92,88,80,.22)" : "rgba(92,88,80,.08)");
       ctx.lineWidth = hot ? 1.6 : Math.min(2, 0.5 + Math.log2(1 + (e.weight || 1)) * 0.3);
-      const dx = b.x - a.x, dy = b.y - a.y;
-      const len = Math.sqrt(dx * dx + dy * dy) || 1;
-      const bow = Math.min(34, len * 0.14);
-      const sign = (e.source + e.target).length % 2 === 0 ? 1 : -1;
+      const cp = ctrlPoint(a, b, e);
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
-      ctx.quadraticCurveTo((a.x + b.x) / 2 - (dy / len) * bow * sign,
-                           (a.y + b.y) / 2 + (dx / len) * bow * sign, b.x, b.y);
+      ctx.quadraticCurveTo(cp.x, cp.y, b.x, b.y);
       ctx.stroke();
+    });
+    // 脉冲：点击节点后，光芒沿触须向每个邻居扩散一次
+    pulses.forEach(function (p) {
+      const a = pos[p.from]; if (!a) return;
+      const prog = Math.min(1, (t - p.t0) / p.dur);
+      edges.forEach(function (e) {
+        let target = null;
+        if (e.source === p.from) target = e.target;
+        else if (e.target === p.from) target = e.source;
+        if (!target) return;
+        const b = pos[target]; if (!b) return;
+        const cp = ctrlPoint(a, b, e);
+        const fade = 1 - prog;
+        ctx.strokeStyle = "rgba(201,162,74," + (0.55 * fade) + ")";
+        ctx.lineWidth = 1.8;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.quadraticCurveTo(cp.x, cp.y, b.x, b.y); ctx.stroke();
+        const u = prog;
+        const qx = (1 - u) * (1 - u) * a.x + 2 * (1 - u) * u * cp.x + u * u * b.x;
+        const qy = (1 - u) * (1 - u) * a.y + 2 * (1 - u) * u * cp.y + u * u * b.y;
+        ctx.fillStyle = "rgba(255,246,214," + fade + ")";
+        ctx.beginPath(); ctx.arc(qx, qy, 2.6, 0, Math.PI * 2); ctx.fill();
+      });
     });
     const drawnLabels = [];
     let labelBudget = 24;
@@ -531,6 +578,22 @@ _CANVAS_JS = r"""
       }
       ctx.globalAlpha = 1;
     });
+    // 水波纹：hover 节点外扩的同心圆
+    if (hover) {
+      const hp = pos[hover.slug];
+      if (hp) {
+        const r = radius(hover);
+        const base = hoverSince || t;
+        for (let i = 0; i < 3; i++) {
+          const phase = ((t - base) / 1600 + i / 3) % 1;
+          ctx.beginPath();
+          ctx.arc(hp.x, hp.y, r + 4 + phase * 30, 0, Math.PI * 2);
+          ctx.strokeStyle = rgba(COLORS[hover.kind] || "#6b5fc4", 0.38 * (1 - phase));
+          ctx.lineWidth = 1.2;
+          ctx.stroke();
+        }
+      }
+    }
     if (selected) {
       const badge = nodes.length + " 个节点 · " + edges.length + " 条边";
       ctx.fillStyle = INK.faint;
@@ -553,6 +616,7 @@ _CANVAS_JS = r"""
 
   async function openNode(n) {
     selected = n;
+    firePulse(n.slug);
     draw();
     const url = PREFIX + "/api/graph/node/" + encodeURIComponent(n.slug);
     const res = await fetch(url).then(function (r) { return r.json(); }).catch(function () { return null; });
@@ -574,7 +638,11 @@ _CANVAS_JS = r"""
       dragFrom = { x: event.clientX, y: event.clientY }; draw(); return;
     }
     const n = pick(event);
-    if (n !== hover) { hover = n; canvas.style.cursor = n ? "pointer" : "grab"; draw(); }
+    if (n !== hover) {
+      hover = n; hoverSince = performance.now();
+      canvas.style.cursor = n ? "pointer" : "grab";
+      kick();
+    }
   });
   canvas.addEventListener("mousedown", function (event) { dragging = true; moved = false; dragFrom = { x: event.clientX, y: event.clientY }; canvas.style.cursor = "grabbing"; });
   window.addEventListener("mouseup", function () { dragging = false; canvas.style.cursor = hover ? "pointer" : "grab"; });

@@ -489,6 +489,8 @@ AI 问答与周报要调模型（单次 20–40s），host 半对 `/kb/api/kb/as
 | `23-dsh-search-wiki.png` | DSH 面板内搜索「资金流向」混排 LLM Wiki 文章与图谱节点卡片 |
 | `24-search-mixed.png` | 同一搜索的独立页面版（侧栏计数与结果数一致，未读/收藏显示为「—」） |
 | `25-graph-index-studio.png` | 图谱索引（编辑排版：指标条 + 图例 + 双栏节点列表） |
+| `27-hover-ripple.png` | hover 节点时的水波纹（三圈同心圆外扩） |
+| `28-click-pulse.png` | 点击节点后的金色脉冲（沿触须向邻居扩散） |
 | `26-graph-canvas-studio.png` | 图谱画布（暖纸底 + 金/薰衣草/玫瑰配色；节点为玻璃光球、背景有水母/光球纹理，两簇：Minecraft 谱系与 A 股） |
 
 语法门：`node --check lib/index.js && node --check client.js && node --check verification/verify-app.mjs && node --check verification/verify-proxy.mjs`；
@@ -532,7 +534,8 @@ basic-memory 等 11 个实现后，结论是本项目的缺口不在 RAG 引擎�
 **水母与光球质感**：画布与索引页加了一层异质环境——页面固定层放水母视频（模糊 26px、`soft-light` 混合、低透明度）
 与三颗漂移的柔光球（金 / 薰衣草 / 玫瑰），画布内再以 `multiply`（暗色 `screen`）铺一层光球线框纹理
 （模糊 2px、透明度 0.11），节点本身画成带高光与辉光的玻璃球：外层同色径向辉光、球体左上高光、下缘半透明，
-边线带轻微弧度，看起来像悬浮的伞盖与触须。素材来自 betterlife neural（见下「素材来源」），
+边线带轻微弧度，看起来像悬浮的伞盖与触须。**交互**：hover 节点时伞盖外扩散出三圈水波纹（1.6s 循环、随半径衰减）；
+点击节点时向所有邻居发出一次金色脉冲——触须被点亮、一枚光点沿贝塞尔曲线滑向邻居（900ms），同时节点被金色环选中。素材来自 betterlife neural（见下「素材来源」），
 `prefers-reduced-motion` 时关闭漂移动画。
 
 ### 素材来源与授权
