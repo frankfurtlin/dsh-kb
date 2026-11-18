@@ -209,9 +209,10 @@ code { padding: 1px 6px; border-radius: 6px; background: var(--chip); font-size:
 .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 11px;
   border: 1px solid var(--line); border-radius: 999px; font-size: 10.5px;
   letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
-.canvas-wrap { padding: 12px; }
+.canvas-wrap { padding: 12px; background: rgba(255, 253, 246, .4); }
+@media (prefers-color-scheme: dark) { .canvas-wrap { background: rgba(255, 255, 255, .03); } }
 #kb-canvas { display: block; width: 100%; height: clamp(420px, 62vh, 720px);
-  border-radius: 14px; background: var(--bg-soft); cursor: grab; }
+  border-radius: 14px; background: transparent; cursor: grab; }
 .canvas-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 12px; }
 .canvas-bar input { flex: 0 1 240px; padding: 9px 14px; border: 1px solid var(--line-2);
   border-radius: 999px; background: var(--bg-soft); color: var(--ink);
@@ -226,6 +227,33 @@ code { padding: 1px 6px; border-radius: 6px; background: var(--chip); font-size:
 #kb-panel h3 { margin: 0 0 6px; font: 600 17px/1.4 var(--serif); color: var(--ink); }
 #kb-panel .meta { font-size: 12px; color: var(--ink-3); margin-bottom: 8px; }
 @media (max-width: 760px) { ul { columns: 1; } body { padding: 24px 18px 56px; } }
+/* 水母与光球：ambient layer（借鉴 betterlife neural 的质感与素材） */
+.stage { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+body > *:not(.stage) { position: relative; z-index: 1; }
+.stage video.jelly { position: absolute; inset: -6%; width: 112%; height: 112%; object-fit: cover;
+  filter: blur(26px) saturate(.9) brightness(1.04); opacity: .16; mix-blend-mode: soft-light; }
+.stage .orbimg { position: absolute; inset: -4%; background: url("/static/media/orb.jpg") center/cover no-repeat;
+  filter: blur(3px) saturate(.9) contrast(.96); opacity: .34; mix-blend-mode: multiply;
+  animation: drift-b 40s ease-in-out infinite alternate; }
+.stage .orb { position: absolute; width: 46vmax; height: 46vmax; border-radius: 50%;
+  filter: blur(46px); opacity: .5; mix-blend-mode: screen; }
+.stage .orb.gold { top: -16vmax; left: -10vmax;
+  background: radial-gradient(circle at 38% 36%, rgba(255,246,214,.95), rgba(214,175,92,.35) 46%, transparent 68%);
+  animation: drift-a 26s ease-in-out infinite alternate; }
+.stage .orb.lav { right: -14vmax; bottom: -18vmax; width: 52vmax; height: 52vmax;
+  background: radial-gradient(circle at 42% 40%, rgba(220,214,255,.9), rgba(120,104,205,.3) 48%, transparent 70%);
+  animation: drift-b 32s ease-in-out infinite alternate; }
+.stage .orb.rose { right: 12vmax; top: 8vmax; width: 30vmax; height: 30vmax;
+  background: radial-gradient(circle at 45% 42%, rgba(255,224,232,.85), rgba(179,112,140,.22) 50%, transparent 72%);
+  animation: drift-a 22s ease-in-out infinite alternate-reverse; }
+@keyframes drift-a { from { transform: translate3d(0,0,0) scale(1); } to { transform: translate3d(4vmax,3vmax,0) scale(1.08); } }
+@keyframes drift-b { from { transform: translate3d(0,0,0) scale(1.04); } to { transform: translate3d(-5vmax,-4vmax,0) scale(1); } }
+@media (prefers-color-scheme: dark) {
+  .stage video.jelly { mix-blend-mode: screen; opacity: .16; filter: blur(26px) saturate(1) brightness(.92); }
+  .stage .orbimg { mix-blend-mode: screen; opacity: .16; filter: blur(3px) saturate(1.1) contrast(1.05); }
+  .stage .orb { opacity: .42; }
+}
+@media (prefers-reduced-motion: reduce) { .stage .orb { animation: none; } }
 """
 
 
@@ -303,6 +331,14 @@ _CANVAS_JS = r"""
   const COLORS = { entity: css("--lav", "#6b5fc4"), topic: css("--rose", "#9c5f74") };
   const INK = { dim: css("--ink-2", "#6f6a5f"), faint: css("--ink-3", "#9a948a"),
     paper: css("--bg-soft", "#fbf8f1"), gold: css("--gold", "#a67c2e") };
+  const DARK = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const ORB = new Image();
+  ORB.src = (window.__KB_PREFIX__ || "") + "/static/media/orb.jpg";
+  function rgba(hex, a) {
+    const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(String(hex).trim());
+    if (!m) return "rgba(107,95,196," + a + ")";
+    return "rgba(" + parseInt(m[1], 16) + "," + parseInt(m[2], 16) + "," + parseInt(m[3], 16) + "," + a + ")";
+  }
 
   function resize() {
     const ratio = window.devicePixelRatio || 1;
@@ -410,8 +446,18 @@ _CANVAS_JS = r"""
   function draw() {
     const rect = canvas.getBoundingClientRect();
     ctx.clearRect(0, 0, rect.width, rect.height);
-    ctx.fillStyle = INK.paper;
-    ctx.fillRect(0, 0, rect.width, rect.height);
+    if (ORB.complete && ORB.naturalWidth) {
+      // 光球纹理：低对比铺在节点后面（亮色 multiply / 暗色 screen）
+      const scale = Math.max(rect.width / ORB.naturalWidth, rect.height / ORB.naturalHeight) * 1.25;
+      const w = ORB.naturalWidth * scale, h = ORB.naturalHeight * scale;
+      ctx.save();
+      ctx.globalAlpha = DARK ? 0.16 : 0.11;
+      ctx.globalCompositeOperation = DARK ? "screen" : "multiply";
+      if ("filter" in ctx) ctx.filter = "blur(2px) saturate(.92)";
+      ctx.drawImage(ORB, (rect.width - w) / 2, (rect.height - h) / 2, w, h);
+      ctx.filter = "none";
+      ctx.restore();
+    }
     const pos = {};
     nodes.forEach(function (n) { pos[n.slug] = toScreen(n); });
     const focus = selected || hover;
@@ -420,21 +466,45 @@ _CANVAS_JS = r"""
       const hot = focus && (e.source === focus.slug || e.target === focus.slug);
       const cool = !focus || hot;
       ctx.strokeStyle = hot ? "rgba(166,124,46,.6)" : (cool ? "rgba(92,88,80,.22)" : "rgba(92,88,80,.08)");
-      ctx.lineWidth = hot ? 1.5 : Math.min(2, 0.5 + Math.log2(1 + (e.weight || 1)) * 0.3);
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      ctx.lineWidth = hot ? 1.6 : Math.min(2, 0.5 + Math.log2(1 + (e.weight || 1)) * 0.3);
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const len = Math.sqrt(dx * dx + dy * dy) || 1;
+      const bow = Math.min(34, len * 0.14);
+      const sign = (e.source + e.target).length % 2 === 0 ? 1 : -1;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.quadraticCurveTo((a.x + b.x) / 2 - (dy / len) * bow * sign,
+                           (a.y + b.y) / 2 + (dx / len) * bow * sign, b.x, b.y);
+      ctx.stroke();
     });
     const drawnLabels = [];
-    let labelBudget = 30;
+    let labelBudget = 24;
     nodes.forEach(function (n) {
       const p = pos[n.slug], r = radius(n);
       const dim = focus && focus.slug !== n.slug && !(edges.some(function (e) { return (e.source === focus.slug && e.target === n.slug) || (e.target === focus.slug && e.source === n.slug); }));
       ctx.globalAlpha = dim ? 0.45 : 1;
-      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
       const focusThis = !!(focus && focus.slug === n.slug);
+      const color = COLORS[n.kind] || "#6b7280";
+      // 光球：外层柔光
+      const halo = ctx.createRadialGradient(p.x, p.y, r * 0.6, p.x, p.y, r * 2.1);
+      halo.addColorStop(0, rgba(color, focusThis ? 0.5 : 0.26));
+      halo.addColorStop(1, rgba(color, 0));
+      ctx.fillStyle = halo;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r * 2.1, 0, Math.PI * 2); ctx.fill();
+      // 球体：左上高光 → 边缘半透明（水母伞盖的质感）
+      const body = ctx.createRadialGradient(p.x - r * 0.34, p.y - r * 0.42, r * 0.12, p.x, p.y, r * 1.06);
+      body.addColorStop(0, "#fffdf6");
+      body.addColorStop(0.34, color);
+      body.addColorStop(1, rgba(color, 0.88));
+      ctx.fillStyle = body;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+      // 高光点
       ctx.save();
-      ctx.shadowColor = (n.kind === "topic" ? "rgba(156,95,116,.45)" : "rgba(107,95,196,.4)");
-      ctx.shadowBlur = focusThis ? 18 : (n.report_count || 0) >= 8 ? 10 : 5;
-      ctx.fillStyle = COLORS[n.kind] || "#6b7280"; ctx.fill();
+      ctx.globalAlpha = dim ? 0.25 : 0.65;
+      ctx.fillStyle = "rgba(255,255,255,.85)";
+      ctx.beginPath();
+      ctx.ellipse(p.x - r * 0.3, p.y - r * 0.38, r * 0.3, r * 0.2, -0.6, 0, Math.PI * 2);
+      ctx.fill();
       ctx.restore();
       if (focusThis) {
         ctx.beginPath(); ctx.arc(p.x, p.y, r + 4, 0, Math.PI * 2);
@@ -443,7 +513,7 @@ _CANVAS_JS = r"""
         ctx.beginPath(); ctx.arc(p.x, p.y, r + 3, 0, Math.PI * 2);
         ctx.strokeStyle = "rgba(166,124,46,.35)"; ctx.lineWidth = 1; ctx.stroke();
       }
-      const wantsLabel = (n.report_count || 0) >= 20 || focusThis;
+      const wantsLabel = (n.report_count || 0) >= 30 || focusThis;
       if (wantsLabel) {
         const label = (n.title || n.slug).slice(0, 14);
         ctx.font = "12px 'Songti SC', 'Noto Serif SC', Georgia, serif";

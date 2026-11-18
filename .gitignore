@@ -23,3 +23,6 @@ verification/shots/
 server/wiki/
 graph/
 wiki/
+
+# 环境视觉素材（来源 betterlife neural，非商业许可，不入库）
+server/app/web/static/media/
