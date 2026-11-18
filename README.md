@@ -324,6 +324,9 @@ SQLite kb.sqlite ── ② 正文摘要 + 全文（≤2 万字）
   一次性 `/api/kb/ask`，功能不退化。
 - 上下文裁剪：流式请求只用 4 篇来源 × 700 字（一次性问答仍是 6 篇 × 1000 字），
   推理模型的思考时间随之下降；`answer_stream()` 与 `chat_stream()` 的 SSE 解析有单元测试覆盖。
+- 实测：`citations` 事件 0.3–0.5 秒到达（资料速览 6 篇、每篇带摘要），首段正文取决于上游模型
+  的思考时间（12–30 秒，随 provider 排队波动），但用户在 1 秒内已经能读到来源与摘要；
+  流式失败会自动回退到一次性接口。
 
 ## 结构
 
@@ -562,6 +565,7 @@ AI 问答与周报要调模型（单次 20–40s），host 半对 `/kb/api/kb/as
 | `27-wiki-index-clean.png` | Wiki 索引页收敛：卡片只留「打开 →」，过期文章才给重新生成 |
 | `29-dsh-help.png` | 快捷键帮助层（? 打开，Esc 关闭） |
 | `30-dsh-wiki-toc.png` | LLM Wiki 长文目录与阅读进度条 |
+| `31-dsh-ask-stream.png` | 流式问答：资料速览先到（约 1 秒），答案逐段输出、显示「首字 N 秒」 |
 | `26-graph-canvas-studio.png` | 图谱画布（暖纸底 + 金/薰衣草/玫瑰配色；节点为玻璃光球、背景有水母/光球纹理，两簇：Minecraft 谱系与 A 股） |
 
 语法门：`node --check lib/index.js && node --check client.js && node --check verification/verify-app.mjs && node --check verification/verify-proxy.mjs`；

@@ -160,6 +160,8 @@ def chat_stream(system: str, user: str, *, max_tokens: int | None = None, temper
         "system": system,
         "user": user,
         "max_tokens": max_tokens or config.AI_MAX_TOKENS,
+        # 问答只需要摘要级推理：低推理强度能显著降低首 token 时间。
+        "reasoning_effort": "low",
     }
     if temperature is not None and temperature != 0.1:
         payload["temperature"] = temperature
