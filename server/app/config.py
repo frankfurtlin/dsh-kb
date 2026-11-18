@@ -119,11 +119,25 @@ HYBRID_WEIGHT_PPR = float(os.environ.get("KB_HYBRID_WEIGHT_PPR", "0.15") or 0.15
 # ---------- P10/P12：知识图谱节点（reports/ 的派生物；与 LLM Wiki 分层） ----------
 # 节点 markdown 目录：pages/<slug>.md + SCHEMA/index/log 元数据，可直接用 Obsidian 打开。
 # 默认在插件根目录（而不是 data/），方便整目录当 Obsidian vault；内容由编译任务重写。
-GRAPH_DIR = _path_env("KB_GRAPH_DIR", os.environ.get("KB_WIKI_DIR") or str(PLUGIN_ROOT / "graph"))
-GRAPH_AUTO = (os.environ.get("KB_GRAPH_AUTO") or os.environ.get("KB_WIKI_AUTO") or "1").strip().lower() not in ("0", "false", "no", "off")
+GRAPH_DIR = _path_env("KB_GRAPH_DIR", str(PLUGIN_ROOT / "graph"))
+GRAPH_AUTO = os.environ.get("KB_GRAPH_AUTO", "1").strip().lower() not in ("0", "false", "no", "off")
 # 一个实体至少在多少篇报告里出现才建节点（1 = 全建，可能上千个）。
-GRAPH_MIN_REPORTS = max(1, int(os.environ.get("KB_GRAPH_MIN_REPORTS") or os.environ.get("KB_WIKI_MIN_REPORTS") or 2))
+GRAPH_MIN_REPORTS = max(1, int(os.environ.get("KB_GRAPH_MIN_REPORTS") or 2))
 # 单次编译最多生成多少节点（防止一次把长尾全铺开）。
-GRAPH_MAX_NODES = max(1, int(os.environ.get("KB_GRAPH_MAX_NODES") or os.environ.get("KB_WIKI_MAX_PAGES") or 400))
+GRAPH_MAX_NODES = max(1, int(os.environ.get("KB_GRAPH_MAX_NODES") or 400))
 # 标签覆盖多少篇报告才建主题节点。
-GRAPH_TOPIC_MIN_REPORTS = max(1, int(os.environ.get("KB_GRAPH_TOPIC_MIN_REPORTS") or os.environ.get("KB_WIKI_TOPIC_MIN_REPORTS") or 5))
+GRAPH_TOPIC_MIN_REPORTS = max(1, int(os.environ.get("KB_GRAPH_TOPIC_MIN_REPORTS") or 5))
+
+# ---------- P13：LLM Wiki（模型撰写的文章，与图谱分层） ----------
+# 文章 markdown 输出目录；与图谱的 graph/ 分开，方便只同步 wiki 目录到 Obsidian。
+WIKI_DIR = _path_env("KB_WIKI_ARTICLES_DIR", str(PLUGIN_ROOT / "wiki"))
+WIKI_AUTO = os.environ.get("KB_WIKI_AUTO", "1").strip().lower() not in ("0", "false", "no", "off")
+# 后台每轮生成几篇 / 间隔秒（每篇一次模型调用，默认保守）。
+WIKI_BATCH = max(1, int(os.environ.get("KB_WIKI_BATCH") or 1))
+WIKI_INTERVAL = max(30.0, float(os.environ.get("KB_WIKI_INTERVAL") or 180))
+# 候选阈值：主题/实体覆盖多少篇报告才写文章；单篇最多引几篇来源。
+WIKI_MIN_REPORTS = max(1, int(os.environ.get("KB_WIKI_MIN_REPORTS") or 3))
+WIKI_MAX_SOURCES = max(3, int(os.environ.get("KB_WIKI_MAX_SOURCES") or 12))
+# 每篇来源送给模型的摘要/正文长度上限（控制上下文与费用）。
+WIKI_SOURCE_CHARS = max(200, int(os.environ.get("KB_WIKI_SOURCE_CHARS") or 900))
+WIKI_MAX_TOKENS = max(600, int(os.environ.get("KB_WIKI_MAX_TOKENS") or 4000))

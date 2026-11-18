@@ -1,39 +1,63 @@
-"""LLM Wiki 接口（P12 与知识图谱拆分）：AI 撰写的长文页。
+"""LLM Wiki 接口与浏览页（P13）：模型撰写的知识长文。
 
-当前为占位实现：文章生成在下一阶段接入，接口先返回空集与明确的 501，
-避免前端在「LLM Wiki」入口里看到图谱节点而误以为是 wiki 文章。
+- API：`/api/wiki/articles`、`/api/wiki/article/{slug}`、`/api/wiki/stats`、
+  `/api/wiki/lint`、`POST /api/wiki/compile`；
+- HTML：`/wiki/` 索引（文章卡片 + 「生成/重新生成」按钮）、`/wiki/{slug}` 文章页
+  （[n] 引用跳到页尾来源列表）。
+
+文章由 `services/kb_wiki.py` 生成：后台按 source_hash 增量、或手动触发。
 """
 
 from __future__ import annotations
 
-import html
+import html as html_lib
+import re
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel
 
+from app.api.routes.graph import render_markdown
 from app.config import ROUTE_PREFIX
 from app.services import kb_wiki
+from app.services.kb_wiki import WikiError
 
 router = APIRouter()
 
 
+class CompileBody(BaseModel):
+    slug: str = ""
+    limit: int = 1
+    force: bool = False
+
+
+def _error(status: int, message: str) -> JSONResponse:
+    return JSONResponse(status_code=status, content={"ok": False, "error": message})
+
+
 def _prefix(request: Request) -> str:
+    """根据访问路径决定内链前缀：DSH iframe 用 /kb，直连后端用空。"""
     path = request.url.path
     if path.startswith(ROUTE_PREFIX + "/"):
         return ROUTE_PREFIX
     return ""
 
 
+# ---------- API ----------
+
+
 @router.get("/api/wiki/articles")
 def wiki_articles(kind: str = "", q: str = "", limit: int = 50, offset: int = 0):
-    return kb_wiki.article_list(kind=kind, q=q, limit=min(max(limit, 1), 200), offset=max(offset, 0))
+    return kb_wiki.article_list(
+        kind=kind, q=q, limit=min(max(limit, 1), 200), offset=max(offset, 0)
+    )
 
 
 @router.get("/api/wiki/article/{slug:path}")
 def wiki_article(slug: str):
     article = kb_wiki.article_detail(slug)
     if not article:
-        return JSONResponse(status_code=404, content={"ok": False, "error": "wiki 文章不存在"})
+        return _error(404, "wiki 文章不存在")
     return article
 
 
@@ -48,64 +72,171 @@ def wiki_lint():
 
 
 @router.post("/api/wiki/compile")
-def wiki_compile():
-    return JSONResponse(
-        status_code=501,
-        content={"ok": False, "mode": "disabled",
-                 "error": "LLM Wiki 文章生成尚未启用（P12 下一步）：当前可用的「知识图谱」在 /api/graph/*"},
-    )
+def wiki_compile(body: CompileBody | None = None):
+    body = body or CompileBody()
+    if kb_wiki.stats().get("mode") != "ai":
+        return _error(503, "AI 未配置：缺少 DSH AI 桥密钥（server/.ai-secret）")
+    try:
+        if body.slug:
+            return kb_wiki.generate(body.slug, force=body.force)
+        return kb_wiki.build_pending(limit=max(1, min(body.limit, 10)), force=body.force)
+    except WikiError as exc:
+        return _error(400, str(exc))
 
+
+# ---------- HTML ----------
 
 _PAGE_CSS = """
-:root { color-scheme: light dark; }
-body { margin: 0; padding: 28px 32px 64px; max-width: 780px; font: 15px/1.75 -apple-system,
-  "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; color: #1f2430; background: #fff; }
-a { color: #4f46e5; text-decoration: none; border-bottom: 1px solid rgba(79,70,229,.25); }
-h1 { font-size: 26px; margin: 0 0 10px; }
-.nav { margin-bottom: 18px; font-size: 13px; color: #6b7280; }
-blockquote { margin: 14px 0; padding: 10px 14px; border-left: 3px solid #c7d2fe; color: #4b5563;
-  background: #f8f9ff; border-radius: 4px; }
-@media (prefers-color-scheme: dark) {
-  body { color: #e5e7eb; background: #16171d; }
-  blockquote { background: #1f2230; border-color: #4c51bf; color: #cbd5e1; }
-  a { color: #a5b4fc; }
-}
+:root { color-scheme: light dark; --bg:#ffffff; --fg:#1f2430; --muted:#6b7280; --accent:#4f46e5;
+  --line:rgba(31,36,48,.12); --card:#f8f9fc; }
+@media (prefers-color-scheme: dark) { :root { --bg:#16171d; --fg:#e5e7eb; --muted:#9aa3b2;
+  --accent:#a5b4fc; --line:rgba(229,231,235,.14); --card:#1d1f28; } }
+body { margin:0; padding:28px 32px 72px; max-width:860px; font:15px/1.75 -apple-system,
+  "Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; color:var(--fg); background:var(--bg); }
+a { color:var(--accent); text-decoration:none; border-bottom:1px solid rgba(0,0,0,0); }
+a:hover { border-bottom-color: currentColor; }
+h1 { font-size:27px; margin:0 0 10px; } h2 { font-size:19px; margin:26px 0 8px; }
+h3 { font-size:16px; margin:20px 0 6px; }
+.nav { margin-bottom:18px; font-size:13px; color:var(--muted); }
+blockquote { margin:14px 0; padding:10px 14px; border-left:3px solid var(--accent);
+  color:var(--muted); background:var(--card); border-radius:4px; font-size:13.5px; }
+.cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:14px; margin-top:20px; }
+.card { border:1px solid var(--line); border-radius:10px; padding:14px 16px; background:var(--card); }
+.card h3 { margin:0 0 6px; font-size:16px; }
+.card .meta { font-size:12.5px; color:var(--muted); margin-bottom:8px; }
+.card .excerpt { font-size:13.5px; opacity:.86; }
+.badge { display:inline-block; padding:1px 7px; border-radius:999px; font-size:11.5px;
+  background:rgba(79,70,229,.14); color:var(--accent); margin:0 6px 0 0; }
+.actions { margin:18px 0 6px; display:flex; gap:10px; flex-wrap:wrap; }
+button { font:inherit; font-size:13px; padding:6px 12px; border-radius:8px; cursor:pointer;
+  border:1px solid var(--line); background:transparent; color:var(--fg); }
+button.primary { border-color:transparent; background:var(--accent); color:#fff; }
+button[disabled] { opacity:.5; cursor:default; }
+.cite a { font-size:11px; vertical-align:super; }
+.sources { margin-top:26px; border-top:1px solid var(--line); padding-top:12px; font-size:13px; color:var(--muted); }
+.sources li { margin:4px 0; }
+.warn { color:#b45309; }
+@media (prefers-color-scheme: dark) { .warn { color:#fbbf24; } }
 """
 
 
 def _shell(title: str, body: str, prefix: str) -> str:
     return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>{html.escape(title)} · LLM Wiki</title><style>{_PAGE_CSS}</style></head>
-<body><div class="nav"><a href="{prefix}/wiki/">LLM Wiki</a> · <a href="{prefix}/graph/">知识图谱</a> · <a href="{prefix}/">返回知识库</a></div>
+<title>{html_lib.escape(title)} · LLM Wiki</title><style>{_PAGE_CSS}</style></head>
+<body><div class="nav"><a href="{prefix}/wiki/">LLM Wiki</a> · <a href="{prefix}/graph/">知识图谱</a>
+ · <a href="{prefix}/">返回知识库</a></div>
 {body}</body></html>"""
+
+
+_GEN_JS = """
+<script>
+async function gen(slug, btn) {
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = '生成中…（约 20-60 秒）';
+  try {
+    const C = window.__KB_PREFIX__ || '';
+    const resp = await fetch(C + '/api/wiki/compile', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(slug ? {slug: slug} : {limit: 1}),
+    });
+    const data = await resp.json();
+    if (!data.ok) { alert(data.error || '生成失败'); }
+    else { location.reload(); }
+  } catch (err) { alert('生成失败：' + err); }
+  btn.disabled = false; btn.textContent = label;
+}
+</script>
+"""
 
 
 @router.get("/wiki/", response_class=HTMLResponse)
 @router.get("/wiki", response_class=HTMLResponse)
 def wiki_index_html(request: Request):
-    body = (
-        "<h1>LLM Wiki</h1>"
-        "<blockquote>这一层是「由模型撰写的知识页」：把某个主题/实体相关的报告综合成一篇带引用的长文，"
-        "而不是节点列表。它和「知识图谱」（节点 + 共现边 + 关系检索）是两层：图谱回答关系与路径，"
-        "Wiki 回答「目前我知道什么」。</blockquote>"
-        "<h2>当前状态</h2>"
-        "<p>P12 已完成架构拆分：图谱能力在 <a href=\"" + _prefix(request) + "/graph/\">知识图谱</a>，"
-        "本入口暂为占位。Wiki 文章表（<code>wiki_article</code>）、AI 撰写、增量重写与"
-        "「重新生成」按钮在下一阶段接入。</p>"
-        "<p>届时每篇文章会带：来源报告引用（[n]）、生成模型与时间、来源 hash（用于增量）、"
-        "以及过期/断链体检（lint）。</p>"
+    prefix = _prefix(request)
+    stats = kb_wiki.stats()
+    listing = kb_wiki.article_list(limit=200)
+    cards = []
+    for item in listing["items"]:
+        state = '<span class="badge">过期</span>' if item["state"] != "live" else ""
+        kind = "主题" if item["kind"] == "topic" else "实体"
+        excerpt = html_lib.escape((item["overview"] or "")[:160])
+        slug = html_lib.escape(item["slug"])
+        cards.append(
+            f'<div class="card"><h3><a href="{prefix}/wiki/{slug}">{html_lib.escape(item["title"])}</a></h3>'
+            f'<div class="meta">{state}<span class="badge">{kind}</span>'
+            f'{item["source_count"]} 篇来源 · {html_lib.escape((item["model"] or "")[:44])} · '
+            f'{html_lib.escape(item["generated_at"][:10])}</div>'
+            f'<div class="excerpt">{excerpt}…</div>'
+            f'<div class="actions"><button onclick="gen(\'{slug}\', this)">重新生成</button></div></div>'
+        )
+    if not cards:
+        cards.append(
+            "<blockquote>还没有文章。点上方「生成一篇」会从覆盖报告最多的主题开始写第一篇；"
+            "每篇约需 20-60 秒（调用 DSH 默认模型）。也可以等后台按增量慢慢补。</blockquote>"
+        )
+    ai_note = (
+        " · 模型 " + html_lib.escape(stats.get("model") or "")
+        if stats.get("mode") == "ai"
+        else ' · <span class="warn">AI 未配置</span>'
     )
-    return HTMLResponse(_shell("LLM Wiki", body, _prefix(request)))
+    head = (
+        "<h1>LLM Wiki</h1>"
+        f"<blockquote>{stats['articles']} 篇文章 · 来源 {stats['sources']} 条 · "
+        f"可达标候选 {stats.get('candidates', 0)} 个{ai_note}</blockquote>"
+        f'<div class="actions"><button class="primary" onclick="gen(\'\', this)">生成一篇</button>'
+        f'<a href="{prefix}/graph/" style="align-self:center;font-size:13px">去知识图谱看节点与关系 →</a></div>'
+        '<p style="font-size:13px;color:var(--muted)">文章由模型综合多篇来源报告写成，每段 [n] 对应页尾来源；'
+        "来源内容变化时文章会被标记为过期，可重新生成。</p>"
+    )
+    prefix_js = f"<script>window.__KB_PREFIX__={prefix!r};</script>"
+    return HTMLResponse(
+        _shell("LLM Wiki", prefix_js + head + _GEN_JS + '<div class="cards">' + "".join(cards) + "</div>", prefix)
+    )
 
 
 @router.get("/wiki/{slug:path}", response_class=HTMLResponse)
 def wiki_article_html(slug: str, request: Request):
+    prefix = _prefix(request)
     article = kb_wiki.article_detail(slug)
     if not article:
         return HTMLResponse(
-            _shell("文章尚未生成", "<h1>文章尚未生成</h1><p>LLM Wiki 文章生成将在下一阶段接入。</p>"
-                   f'<p><a href="{_prefix(request)}/graph/">去知识图谱浏览实体与主题</a></p>', _prefix(request)),
+            _shell(
+                "文章不存在",
+                "<h1>文章不存在</h1><p>这篇文章还没有生成，或已被清理。</p>"
+                f'<p><a href="{prefix}/wiki/">返回 LLM Wiki 索引</a> · '
+                f'<a href="{prefix}/graph/">去知识图谱浏览节点</a></p>',
+                prefix,
+            ),
             status_code=404,
         )
-    return HTMLResponse(_shell(article["title"], f"<h1>{html.escape(article['title'])}</h1><pre>{html.escape(article['body_md'])}</pre>", _prefix(request)))
+    body = render_markdown(article["body_md"], prefix)
+    body = re.sub(
+        r"\[(\d+)\]",
+        lambda m: f'<sup class="cite"><a href="#src-{m.group(1)}">[{m.group(1)}]</a></sup>',
+        body,
+    )
+    sources = "".join(
+        f'<li id="src-{src["n"]}">{src["n"]}. '
+        f'<a href="{prefix}/{html_lib.escape(src["url"])}">{html_lib.escape(src["title"])}</a> '
+        f'<span style="opacity:.7">（{html_lib.escape(src["path"])}）</span></li>'
+        for src in article.get("sources") or []
+    )
+    state = (
+        '<span class="warn">（来源已变化，建议重新生成）</span>'
+        if article["state"] != "live"
+        else ""
+    )
+    generated = html_lib.escape((article.get("generated_at") or "")[:16].replace("T", " "))
+    header = (
+        f'<h1>{html_lib.escape(article["title"])}</h1>'
+        f'<div class="nav">{html_lib.escape(article["kind"])}「{html_lib.escape(article["subject"])}」 · '
+        f'{article["source_count"]} 篇来源 · 模型 {html_lib.escape(article.get("model") or "")} · '
+        f'{generated} {state}</div>'
+        f'<div class="actions"><button onclick="gen(\'{html_lib.escape(article["slug"])}\', this)">重新生成</button></div>'
+    )
+    footer = f'<div class="sources"><h2>来源</h2><ol style="padding-left:20px">{sources}</ol></div>'
+    prefix_js = f"<script>window.__KB_PREFIX__={prefix!r};</script>"
+    return HTMLResponse(
+        _shell(article["title"], prefix_js + header + body + footer + _GEN_JS, prefix)
+    )

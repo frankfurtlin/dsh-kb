@@ -36,7 +36,16 @@ from app.api.routes import graph as graph_routes
 from app.api.routes import wiki as wiki_routes
 from app.api.routes import reports as report_routes
 from app.config import ROUTE_PREFIX, STATIC_DIR
-from app.services import kb_ai, kb_classify, kb_embed, kb_enrich, kb_graph, kb_search, kb_store
+from app.services import (
+    kb_ai,
+    kb_classify,
+    kb_embed,
+    kb_enrich,
+    kb_graph,
+    kb_search,
+    kb_store,
+    kb_wiki,
+)
 
 logger = logging.getLogger("dsh-kb")
 
@@ -71,6 +80,23 @@ def _classify_worker(stop_event: threading.Event) -> None:
                 )
         except Exception as exc:  # 后台线程不因单次失败退出
             logger.warning("AI 分类批次失败：%s", exc)
+
+
+def _wiki_worker(stop_event: threading.Event) -> None:
+    """低频后台补写 LLM Wiki 文章：每轮最多 WIKI_BATCH 篇，hash 命中跳过。"""
+    while not stop_event.wait(config.WIKI_INTERVAL):
+        try:
+            result = kb_wiki.build_pending(limit=config.WIKI_BATCH)
+            generated = result.get("generated") or []
+            if generated or result.get("failed"):
+                logger.info(
+                    "LLM Wiki：本批生成 %s 篇，跳过 %s，失败 %s",
+                    len(generated),
+                    result.get("skipped"),
+                    len(result.get("failed") or []),
+                )
+        except Exception as exc:  # 后台线程不因单次失败退出
+            logger.warning("LLM Wiki 批次失败：%s", exc)
 
 
 def _embed_worker(stop_event: threading.Event) -> None:
@@ -130,6 +156,17 @@ async def lifespan(_app: FastAPI):
             config.CLASSIFY_INTERVAL,
             config.CLASSIFY_BATCH,
         )
+    if config.WIKI_AUTO and kb_ai.is_configured():
+        wiki_worker = threading.Thread(
+            target=_wiki_worker, args=(stop_event,), name="kb-wiki", daemon=True
+        )
+        wiki_worker.start()
+        workers.append(wiki_worker)
+        logger.info(
+            "LLM Wiki 后台补写已启动（每 %.0fs 最多 %s 篇）", config.WIKI_INTERVAL, config.WIKI_BATCH
+        )
+    elif not kb_ai.is_configured():
+        logger.warning("LLM Wiki 后台补写未启动：AI 未配置")
     if config.EMBED_ENABLED and kb_embed.available():
         embedder = threading.Thread(target=_embed_worker, args=(stop_event,), name="kb-embed", daemon=True)
         embedder.start()

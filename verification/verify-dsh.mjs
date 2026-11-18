@@ -210,20 +210,35 @@ try {
     `title=${graphTitle} links=${graphLinks}`)
   await page.screenshot({ path: join(OUT, '20-dsh-graph.png'), fullPage: true })
 
-  // 回到知识库面板首页，再从同一 iframe 的侧栏进入 LLM Wiki（验证两个入口各自独立）
+  // P13：进入 LLM Wiki 文章层（uke 层已由后台/CLI 生成，验证卡片与文章页引用）
   if (graphFrame) {
     await graphFrame.goto(`${new globalThis.URL(URL).origin}/kb/`, { waitUntil: 'domcontentloaded' })
     await graphFrame.waitForSelector('#kb-wiki-entry', { timeout: 15000 })
     await graphFrame.click('#kb-wiki-entry')
     await page.waitForTimeout(1500)
-    const wikiFrame = page.frames().find((item) => item.url().includes('/kb/wiki/'))
-    const wikiText = wikiFrame ? await wikiFrame.locator('body').innerText() : ''
-    check('iframe 内 LLM Wiki 占位页说明两层分工',
-      Boolean(wikiFrame) && wikiText.includes('LLM Wiki') && wikiText.includes('知识图谱'),
-      `len=${wikiText.length}`)
-    await page.screenshot({ path: join(OUT, '21-dsh-wiki-placeholder.png'), fullPage: true })
+    let wikiFrame = page.frames().find((item) => item.url().includes('/kb/wiki/'))
+    if (!wikiFrame) {
+      await graphFrame.goto(`${new globalThis.URL(URL).origin}/kb/wiki/`, { waitUntil: 'domcontentloaded' })
+      wikiFrame = graphFrame
+    }
+    const cards = wikiFrame.locator('.card').count ? await wikiFrame.locator('.card').count() : 0
+    const wikiText = await wikiFrame.locator('body').innerText()
+    check('iframe 内 LLM Wiki 索引显示文章卡片', cards > 0 && wikiText.includes('LLM Wiki'),
+      `cards=${cards}`)
+    if (cards > 0) {
+      await wikiFrame.locator('.card h3 a').first().click()
+      await page.waitForTimeout(1200)
+      const articleHtml = await wikiFrame.content()
+      const cites = await wikiFrame.locator('sup.cite a').count()
+      check('LLM Wiki 文章页带 [n] 引用与来源列表',
+        articleHtml.includes('来源') && cites > 0, `cites=${cites}`)
+      await page.screenshot({ path: join(OUT, '21-dsh-wiki-article.png'), fullPage: true })
+    } else {
+      check('LLM Wiki 文章页带 [n] 引用与来源列表', false, '没有可点击的文章卡片')
+      await page.screenshot({ path: join(OUT, '21-dsh-wiki-empty.png'), fullPage: true })
+    }
   } else {
-    check('iframe 内 LLM Wiki 占位页说明两层分工', false, '知识图谱 iframe 未找到，无法回到面板')
+    check('iframe 内 LLM Wiki 索引显示文章卡片', false, '知识图谱 iframe 未找到，无法回到面板')
   }
   await page.goto(URL)
   await page.waitForTimeout(600)

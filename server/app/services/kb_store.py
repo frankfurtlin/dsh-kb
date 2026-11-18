@@ -146,6 +146,44 @@ CREATE TABLE IF NOT EXISTS compile_job (
     updated_at TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (report_path, page_slug)
 );
+
+-- P13：LLM Wiki 文章（模型撰写，带 [n] 来源引用；与图谱节点分表分目录）。
+CREATE TABLE IF NOT EXISTS wiki_article (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL DEFAULT 'topic',        -- topic | entity | overview
+    subject TEXT NOT NULL DEFAULT '',
+    overview TEXT NOT NULL DEFAULT '',
+    body_md TEXT NOT NULL DEFAULT '',
+    source_hash TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT 'live',        -- live | stale | archived
+    model TEXT NOT NULL DEFAULT '',
+    takeaway_count INTEGER NOT NULL DEFAULT 0,
+    source_count INTEGER NOT NULL DEFAULT 0,
+    generated_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_wiki_article_state ON wiki_article(state, updated_at);
+
+CREATE TABLE IF NOT EXISTS wiki_article_source (
+    article_id INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,       -- 正文里的引用编号 [n]
+    title TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (article_id, path)
+);
+CREATE INDEX IF NOT EXISTS idx_wiki_article_source_path ON wiki_article_source(path);
+
+-- 生成队列：手动/后台排队的文章；状态 pending | running | done | failed。
+CREATE TABLE IF NOT EXISTS wiki_article_job (
+    slug TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    error TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT ''
+);
 """
 
 # 旧库升级：CREATE TABLE IF NOT EXISTS 不会补列，这里逐列 ALTER。
@@ -1767,3 +1805,197 @@ def ppr_report_boost(seed_paths, keyword_slugs=()) -> dict[str, float]:
     if peak <= 0:
         return {}
     return {path: value / peak for path, value in boost.items()}
+
+
+# ---------- P13：LLM Wiki 文章（kb_wiki 写，API 读） ----------
+
+
+def _article_row(row, sources=None) -> dict:
+    item = {
+        "slug": row["slug"],
+        "title": row["title"],
+        "kind": row["kind"],
+        "subject": row["subject"],
+        "overview": row["overview"],
+        "body_md": row["body_md"],
+        "source_hash": row["source_hash"],
+        "state": row["state"],
+        "model": row["model"],
+        "takeaway_count": row["takeaway_count"],
+        "source_count": row["source_count"],
+        "generated_at": row["generated_at"],
+        "updated_at": row["updated_at"],
+    }
+    if sources is not None:
+        item["sources"] = sources
+    return item
+
+
+def wiki_article_stats() -> dict:
+    conn = connect()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS total, SUM(state='stale') AS stale, "
+            "SUM(source_count) AS sources FROM wiki_article"
+        ).fetchone()
+        jobs = conn.execute(
+            "SELECT COUNT(*) AS n FROM wiki_article_job WHERE status IN ('pending','running')"
+        ).fetchone()
+        return {
+            "articles": row["total"] or 0,
+            "stale": row["stale"] or 0,
+            "sources": row["sources"] or 0,
+            "pending_jobs": jobs["n"] or 0,
+        }
+    finally:
+        conn.close()
+
+
+def wiki_article_list(kind: str = "", q: str = "", limit: int = 50, offset: int = 0) -> dict:
+    clauses, params = [], []
+    if kind:
+        clauses.append("kind = ?")
+        params.append(kind)
+    if q:
+        clauses.append("(title LIKE ? ESCAPE '\\' OR subject LIKE ? ESCAPE '\\' OR overview LIKE ? ESCAPE '\\')")
+        like = f"%{_like(q)}%"
+        params += [like, like, like]
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    conn = connect()
+    try:
+        total = conn.execute(f"SELECT COUNT(*) AS n FROM wiki_article {where}", params).fetchone()["n"]
+        rows = conn.execute(
+            f"SELECT * FROM wiki_article {where} ORDER BY source_count DESC, updated_at DESC LIMIT ? OFFSET ?",
+            [*params, limit, offset],
+        ).fetchall()
+        return {
+            "total": total,
+            "items": [_article_row(row) for row in rows],
+            "limit": limit,
+            "offset": offset,
+            "mode": "ai",
+        }
+    finally:
+        conn.close()
+
+
+def wiki_article_detail(slug: str) -> dict | None:
+    conn = connect()
+    try:
+        row = conn.execute("SELECT * FROM wiki_article WHERE slug = ?", (slug,)).fetchone()
+        if not row:
+            return None
+        sources = [
+            {
+                "n": item["position"],
+                "path": item["path"],
+                "title": item["title"],
+                "url": f"reports/{item['path']}",
+            }
+            for item in conn.execute(
+                "SELECT path, position, title FROM wiki_article_source WHERE article_id = ? ORDER BY position",
+                (row["id"],),
+            ).fetchall()
+        ]
+        return _article_row(row, sources)
+    finally:
+        conn.close()
+
+
+def save_wiki_article(
+    slug: str,
+    *,
+    title: str,
+    kind: str,
+    subject: str,
+    overview: str,
+    body_md: str,
+    source_hash: str,
+    sources: list[dict],
+    model: str,
+    takeaways: int = 0,
+) -> str:
+    """写入/更新一篇文章（含来源引用）；返回 generated_at。"""
+    now = _now()
+    conn = connect()
+    try:
+        conn.execute(
+            """
+            INSERT INTO wiki_article (slug, title, kind, subject, overview, body_md, source_hash,
+                                     state, model, takeaway_count, source_count, generated_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'live', ?, ?, ?, ?, ?)
+            ON CONFLICT(slug) DO UPDATE SET
+                title=excluded.title, kind=excluded.kind, subject=excluded.subject,
+                overview=excluded.overview, body_md=excluded.body_md,
+                source_hash=excluded.source_hash, state='live', model=excluded.model,
+                takeaway_count=excluded.takeaway_count, source_count=excluded.source_count,
+                generated_at=excluded.generated_at, updated_at=excluded.updated_at
+            """,
+            (slug, title, kind, subject, overview, body_md, source_hash, model,
+             takeaways, len(sources), now, now),
+        )
+        article_id = conn.execute("SELECT id FROM wiki_article WHERE slug = ?", (slug,)).fetchone()["id"]
+        conn.execute("DELETE FROM wiki_article_source WHERE article_id = ?", (article_id,))
+        conn.executemany(
+            "INSERT INTO wiki_article_source (article_id, path, position, title) VALUES (?, ?, ?, ?)",
+            [(article_id, item["path"], index + 1, item.get("title") or item["path"])
+             for index, item in enumerate(sources)],
+        )
+        conn.execute(
+            "INSERT INTO wiki_article_job (slug, status, attempts, error, created_at, updated_at) "
+            "VALUES (?, 'done', 1, '', ?, ?) "
+            "ON CONFLICT(slug) DO UPDATE SET status='done', attempts=attempts+1, error='', updated_at=excluded.updated_at",
+            (slug, now, now),
+        )
+        conn.commit()
+        return now
+    finally:
+        conn.close()
+
+
+def mark_wiki_article_stale(slug: str) -> None:
+    conn = connect()
+    try:
+        conn.execute("UPDATE wiki_article SET state='stale', updated_at=? WHERE slug=?", (_now(), slug))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_wiki_article(slug: str) -> bool:
+    conn = connect()
+    try:
+        row = conn.execute("SELECT id FROM wiki_article WHERE slug = ?", (slug,)).fetchone()
+        if not row:
+            return False
+        conn.execute("DELETE FROM wiki_article_source WHERE article_id = ?", (row["id"],))
+        conn.execute("DELETE FROM wiki_article WHERE id = ?", (row["id"],))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def wiki_articles_live() -> list[dict]:
+    conn = connect()
+    try:
+        rows = conn.execute("SELECT * FROM wiki_article ORDER BY source_count DESC, updated_at DESC").fetchall()
+        return [_article_row(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def record_wiki_job(slug: str, status: str, error: str = "") -> None:
+    now = _now()
+    conn = connect()
+    try:
+        conn.execute(
+            "INSERT INTO wiki_article_job (slug, status, attempts, error, created_at, updated_at) "
+            "VALUES (?, ?, 1, ?, ?, ?) "
+            "ON CONFLICT(slug) DO UPDATE SET status=excluded.status, attempts=attempts+1, "
+            "error=excluded.error, updated_at=excluded.updated_at",
+            (slug, status, error[:500], now, now),
+        )
+        conn.commit()
+    finally:
+        conn.close()

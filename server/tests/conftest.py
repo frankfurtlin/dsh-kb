@@ -69,6 +69,8 @@ os.environ["KB_PUBLIC_BASE_URL"] = "https://example.test/kb-public"
 os.environ["KB_GRAPH_DIR"] = str(_TMP_ROOT / "graph")
 os.environ["KB_GRAPH_AUTO"] = "0"
 os.environ["KB_GRAPH_TOPIC_MIN_REPORTS"] = "2"
+os.environ["KB_WIKI_DIR"] = str(_TMP_ROOT / "wiki")
+os.environ["KB_WIKI_AUTO"] = "0"
 
 from fastapi.testclient import TestClient  # noqa: E402
 

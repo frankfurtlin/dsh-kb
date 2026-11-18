@@ -587,6 +587,25 @@ async function main() {
     await page.waitForTimeout(300)
     check('P7 删除保存筛选后列表消失', (await page.locator('.kb-saved-item').count()) === 0)
 
+    // ---------- P13：LLM Wiki 文章层（临时后端无模型 → 验证降级路径） ----------
+    const wikiListing = await api('/api/wiki/articles')
+    check('P13 GET /api/wiki/articles 返回文章集与模式',
+      wikiListing.status === 200 && wikiListing.json?.total === 0 && wikiListing.json?.mode === 'disabled',
+      `status=${wikiListing.status} total=${wikiListing.json?.total}`)
+    const wikiStats = await api('/api/wiki/stats')
+    check('P13 GET /api/wiki/stats 显示候选与禁用状态',
+      wikiStats.json?.mode === 'disabled' && wikiStats.json?.articles === 0 &&
+      Number.isInteger(wikiStats.json?.candidates) && wikiStats.json.candidates >= 0,
+      `candidates=${wikiStats.json?.candidates}`)
+    const wikiCompile = await api('/api/wiki/compile', { method: 'POST' })
+    check('P13 AI 未配置时 compile 返回 503', wikiCompile.status === 503, `${wikiCompile.status}`)
+    const wikiHtmlResp = await fetch(ORIGIN + '/wiki/')
+    const wikiHtml = await wikiHtmlResp.text()
+    check('P13 /wiki/ 索引页可访问且与图谱分层',
+      wikiHtmlResp.status === 200 && wikiHtml.includes('LLM Wiki') && wikiHtml.includes('知识图谱'))
+    check('P13 /wiki/<不存在> 返回 404', (await fetch(ORIGIN + '/wiki/no-such-article')).status === 404)
+    check('P13 侧栏有独立「LLM Wiki」入口', (await page.locator('#kb-wiki-entry').count()) === 1)
+
     // ---------- 移动端 ----------
     await page.setViewportSize({ width: 390, height: 844 })
     await page.reload({ waitUntil: 'networkidle' })
