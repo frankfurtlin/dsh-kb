@@ -210,7 +210,18 @@ def wiki_article_html(slug: str, request: Request):
             ),
             status_code=404,
         )
-    body = render_markdown(article["body_md"], prefix)
+    markdown = article["body_md"].lstrip()
+    # 页面头部已经展示标题与元信息，正文里跳过重复的 `# 标题` 与 `> LLM Wiki ...` 元信息行
+    lines = markdown.splitlines()
+    while lines and lines[0].startswith("# "):
+        lines.pop(0)
+        while lines and not lines[0].strip():
+            lines.pop(0)
+    if lines and lines[0].startswith("> LLM Wiki"):
+        lines.pop(0)
+        while lines and not lines[0].strip():
+            lines.pop(0)
+    body = render_markdown("\n".join(lines), prefix)
     body = re.sub(
         r"\[(\d+)\]",
         lambda m: f'<sup class="cite"><a href="#src-{m.group(1)}">[{m.group(1)}]</a></sup>',
