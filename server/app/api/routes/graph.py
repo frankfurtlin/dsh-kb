@@ -348,7 +348,41 @@ _CANVAS_JS = r"""
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   }
 
-  function layout() {
+  let simRaf = 0, simStep = 0, relaxPass = 0, simNodes = null;
+
+  function hashString(text) {
+    let h = 5381;
+    for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(36);
+  }
+
+  function cacheKey() {
+    const sig = (input.value || "").trim().toLowerCase() + "|" +
+      nodes.map(function (n) { return n.slug; }).join(",") + "|" + edges.length;
+    return "kb-graph-layout-" + hashString(sig);
+  }
+
+  function storeLayout() {
+    try {
+      const pos = {};
+      nodes.forEach(function (n) { pos[n.slug] = [Math.round(n.x), Math.round(n.y)]; });
+      sessionStorage.setItem(cacheKey(), JSON.stringify(pos));
+    } catch (err) { /* 隐私模式等场景忽略 */ }
+  }
+
+  function applyLayout(cached) {
+    try {
+      const pos = JSON.parse(cached);
+      nodes.forEach(function (n) {
+        const p = pos[n.slug];
+        if (p) { n.x = p[0]; n.y = p[1]; n.vx = 0; n.vy = 0; }
+      });
+      return true;
+    } catch (err) { return false; }
+  }
+
+  // P0-3：先画一帧（不会白屏），力导向按帧预算在后台推进，用户能看到图"长出来"。
+  function prepare() {
     const regex = (input.value || "").trim().toLowerCase();
     nodes = data.nodes
       .filter(function (n) { return !regex || (n.title || n.slug).toLowerCase().indexOf(regex) >= 0 || (n.entity_type || "").toLowerCase().indexOf(regex) >= 0; })
@@ -357,62 +391,115 @@ _CANVAS_JS = r"""
     nodes.forEach(function (n) { keep[n.slug] = true; });
     edges = data.edges.filter(function (e) { return keep[e.source] && keep[e.target]; });
     const links = {};
-    nodes.forEach(function (n) { n.x = Math.random() * 800; n.y = Math.random() * 600; n.vx = 0; n.vy = 0; links[n.slug] = []; });
+    nodes.forEach(function (n, i) {
+      // 初始圆周分布，观感稳定且有利于力导向收敛
+      const angle = i * 2.39996, radius0 = 40 + Math.sqrt(nodes.length) * 26;
+      n.x = 480 + Math.cos(angle) * radius0;
+      n.y = 360 + Math.sin(angle) * radius0 * 0.72;
+      n.vx = 0; n.vy = 0; links[n.slug] = [];
+    });
     edges.forEach(function (e) {
       links[e.source].push({ other: e.target, w: Math.min(3, 1 + Math.log2(1 + (e.weight || 1)) * 0.4) });
       links[e.target].push({ other: e.source, w: Math.min(3, 1 + Math.log2(1 + (e.weight || 1)) * 0.4) });
     });
-    const index = {};
-    nodes.forEach(function (n) { index[n.slug] = n; });
+    simNodes = { links: links, index: {} };
+    nodes.forEach(function (n) { simNodes.index[n.slug] = n; });
+    simStep = 0;
+    relaxPass = 0;
+  }
+
+  function forceIteration(step) {
+    const links = simNodes.links, index = simNodes.index;
     const K = 46, rep = 2800, iters = 320;
-    for (let step = 0; step < iters; step++) {
-      const cool = 1 - step / iters;
-      for (let i = 0; i < nodes.length; i++) {
-        const a = nodes[i];
-        for (let j = i + 1; j < nodes.length; j++) {
-          const b = nodes[j];
-          let dx = a.x - b.x, dy = a.y - b.y;
-          let d2 = dx * dx + dy * dy + 0.01;
-          if (d2 > 90000) continue;
-          const force = rep / d2;
-          dx *= force; dy *= force;
-          a.vx += dx; a.vy += dy; b.vx -= dx; b.vy -= dy;
-        }
+    const cool = 1 - step / iters;
+    for (let i = 0; i < nodes.length; i++) {
+      const a = nodes[i];
+      for (let j = i + 1; j < nodes.length; j++) {
+        const b = nodes[j];
+        let dx = a.x - b.x, dy = a.y - b.y;
+        const d2 = dx * dx + dy * dy + 0.01;
+        if (d2 > 90000) continue;
+        const force = rep / d2;
+        dx *= force; dy *= force;
+        a.vx += dx; a.vy += dy; b.vx -= dx; b.vy -= dy;
       }
-      nodes.forEach(function (n) {
-        (links[n.slug] || []).forEach(function (l) {
-          const o = index[l.other]; if (!o) return;
-          const dx = o.x - n.x, dy = o.y - n.y;
-          const d = Math.sqrt(dx * dx + dy * dy) + 0.01;
-          const force = (d - K) / d * 0.035 * l.w;
-          n.vx += dx * force; n.vy += dy * force;
-          o.vx -= dx * force; o.vy -= dy * force;
-        });
-        n.vx += (500 - n.x) * 0.0012; n.vy += (380 - n.y) * 0.0012;
-        n.x += Math.max(-9, Math.min(9, n.vx)) * cool;
-        n.y += Math.max(-9, Math.min(9, n.vy)) * cool;
-        n.vx *= 0.82; n.vy *= 0.82;
+    }
+    nodes.forEach(function (n) {
+      (links[n.slug] || []).forEach(function (l) {
+        const o = index[l.other]; if (!o) return;
+        const dx = o.x - n.x, dy = o.y - n.y;
+        const d = Math.sqrt(dx * dx + dy * dy) + 0.01;
+        const force = (d - K) / d * 0.035 * l.w;
+        n.vx += dx * force; n.vy += dy * force;
+        o.vx -= dx * force; o.vy -= dy * force;
       });
-    }
-    for (let pass = 0; pass < 70; pass++) {
-      for (let i = 0; i < nodes.length; i++) {
-        for (let j = i + 1; j < nodes.length; j++) {
-          const a = nodes[i], b = nodes[j];
-          const dx = b.x - a.x, dy = b.y - a.y;
-          let d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-          const min = radius(a) + radius(b) + 14;
-          if (d < min) {
-            const push = (min - d) / d * 0.5;
-            a.x -= dx * push; a.y -= dy * push;
-            b.x += dx * push; b.y += dy * push;
-          }
+      n.vx += (500 - n.x) * 0.0012; n.vy += (380 - n.y) * 0.0012;
+      n.x += Math.max(-9, Math.min(9, n.vx)) * cool;
+      n.y += Math.max(-9, Math.min(9, n.vy)) * cool;
+      n.vx *= 0.82; n.vy *= 0.82;
+    });
+  }
+
+  function relaxIteration() {
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = nodes[i], b = nodes[j];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+        const min = radius(a) + radius(b) + 14;
+        if (d < min) {
+          const push = (min - d) / d * 0.5;
+          a.x -= dx * push; a.y -= dy * push;
+          b.x += dx * push; b.y += dy * push;
         }
       }
     }
+  }
+
+  function finishLayout() {
     fit();
     meta.textContent = nodes.length + " 个节点 · " + edges.length + " 条边 · 全图 " + data.total_nodes + " 节点";
     fillLegend();
     draw();
+    storeLayout();
+  }
+
+  function stepSim() {
+    const t0 = performance.now();
+    while (simStep < 320 && performance.now() - t0 < 10) { forceIteration(simStep); simStep++; }
+    draw();
+    if (simStep < 320) {
+      simRaf = requestAnimationFrame(stepSim);
+      return;
+    }
+    stepRelax();
+  }
+
+  function stepRelax() {
+    const t0 = performance.now();
+    while (relaxPass < 70 && performance.now() - t0 < 8) { relaxIteration(); relaxPass++; }
+    draw();
+    if (relaxPass < 70) {
+      simRaf = requestAnimationFrame(stepRelax);
+      return;
+    }
+    finishLayout();
+  }
+
+  function layout() {
+    if (simRaf) cancelAnimationFrame(simRaf);
+    simRaf = 0;
+    prepare();
+    fit();
+    draw();
+    meta.textContent = "布局中… · " + nodes.length + " 个节点 · " + edges.length + " 条边";
+    let cached = null;
+    try { cached = sessionStorage.getItem(cacheKey()); } catch (err) { cached = null; }
+    if (cached && applyLayout(cached)) {
+      finishLayout();
+      return;
+    }
+    simRaf = requestAnimationFrame(stepSim);
   }
 
   function fillLegend() {

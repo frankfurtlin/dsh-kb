@@ -116,6 +116,9 @@ EMBED_INTERVAL = max(0.5, float(os.environ.get("KB_EMBED_INTERVAL", "2") or 2))
 HYBRID_WEIGHT_SEMANTIC = float(os.environ.get("KB_HYBRID_SEMANTIC", "0.62") or 0.62)
 HYBRID_WEIGHT_LEXICAL = float(os.environ.get("KB_HYBRID_LEXICAL", "0.38") or 0.38)
 HYBRID_WEIGHT_PPR = float(os.environ.get("KB_HYBRID_WEIGHT_PPR", "0.15") or 0.15)
+# P0-1：语义模式的最低相似度（去中心余弦）。bge 原始余弦有 0.3–0.5 的全局偏移，
+# 必须先在 hybrid_search 里减去语料中心向量，这个阈值才有意义。
+SEMANTIC_MIN_SCORE = float(os.environ.get("KB_SEMANTIC_MIN_SCORE", "0.35") or 0.35)
 # ---------- P10/P12：知识图谱节点（reports/ 的派生物；与 LLM Wiki 分层） ----------
 # 节点 markdown 目录：pages/<slug>.md + SCHEMA/index/log 元数据，可直接用 Obsidian 打开。
 # 默认在插件根目录（而不是 data/），方便整目录当 Obsidian vault；内容由编译任务重写。

@@ -78,8 +78,11 @@ def search(
 ) -> dict:
     keyword = (q or "").strip()
     requested = (mode or "auto").strip().lower()
-    use_hybrid = requested in ("auto", "hybrid") and bool(keyword) and kb_embed.available()
+    if requested not in ("auto", "hybrid", "lexical", "semantic"):
+        requested = "auto"
+    use_hybrid = requested in ("auto", "hybrid", "semantic") and bool(keyword) and kb_embed.available()
     if use_hybrid:
+        passed_mode = "semantic" if requested == "semantic" else "hybrid"
         try:
             query_vector = kb_embed.embed_query(keyword)
             items, total = kb_store.hybrid_search(
@@ -98,10 +101,13 @@ def search(
                 include_nodes=not any((category, series, date_from, date_to)) and view == "all",
                 include_articles=not any((category, series, date_from, date_to)) and view == "all",
                 ppr_weight=config.HYBRID_WEIGHT_PPR,
+                mode=passed_mode,
             )
-            # 向量还没补齐（例如刚重启）时，语义结果可能为空：退回词法。
+            # semantic 模式下"0 条"是有效结果；hybrid 空结果先退回词法兜底。
+            if requested == "semantic":
+                return {"mode": "semantic", "items": items, "total": total}
             if items or total == 0:
-                return {"mode": "hybrid", "items": items, "total": total}
+                return {"mode": passed_mode, "items": items, "total": total}
         except Exception as exc:  # 语义链路故障不影响可用性
             logger.warning("混合检索失败，降级为词法检索：%s", exc)
     items, total = kb_store.list_reports(

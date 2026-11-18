@@ -207,3 +207,16 @@ cd plugins/dsh-kb/verification && node verify-dsh.mjs --url "http://127.0.0.1:30
 | `10-digest.png` | 周报 |
 | `15-public.png` | 公开页（过简） |
 | `18-dark.png` / `19-dark-canvas.png` | 暗色模式 |
+
+## 执行状态（2026-11-18）
+
+Sprint A（P0）已落地并验收，记录在此以免计划文档与现实脱节。
+
+| 计划项 | 状态 | 证据 |
+| --- | --- | --- |
+| P0-1 搜索可信度 | 已完成 | hybrid 词法硬门槛 + 去中心余弦 + 三模式；垃圾词从 839 → 0，`铝业` 14 条；`pytest` 新增 5 条回归，`verify-dsh` 增加真实面板空结果断言 |
+| P0-2 移动端 | 已完成 | 导航横向滚动（32px 单行、无竖排）、无横向溢出、360/390 首屏 2 卡；`verify-app` 增加 3 条移动端断言 |
+| P0-3 画布首帧 | 已完成 | 渐进力导向 + sessionStorage 布局缓存：首帧 687ms（原 1812ms），二次进入 71ms；`verify-app` 增加像素输出与缓存命中断言 |
+| P1 / P2 | 未开始 | 待 Sprint B/C（抽屉焦点陷阱、AI 问答进度与取消、计数语义、Wiki 按钮收敛等） |
+
+验收基线：`pytest` 66、`verify-app` 112/112、`verify-proxy` 11/11、`verify-dsh` 24/24。

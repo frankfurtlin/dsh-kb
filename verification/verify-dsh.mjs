@@ -119,6 +119,10 @@ try {
     await page.waitForTimeout(900)
     const marks = await frame.locator('.kb-item mark').count()
     check('iframe 内搜索「铝业」并有高亮', marks > 0, `marks=${marks}`)
+    await frame.fill('#kb-search', 'zzz-no-such-keyword')
+    await page.waitForTimeout(900)
+    const emptyLabel = await frame.locator('#kb-result').innerText()
+    check('P0-1 真实面板：垃圾词返回「没有结果」', emptyLabel.includes('没有结果'), emptyLabel)
     await frame.click('#kb-search-clear')
     await page.waitForTimeout(600)
 

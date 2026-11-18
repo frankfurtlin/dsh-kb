@@ -128,9 +128,11 @@
       </div>
       <div class="kb-mode" id="kb-mode" role="group" aria-label="检索方式">
         <button type="button" class="kb-mode-btn is-on" id="kb-mode-hybrid" data-mode="hybrid"
-                onclick="kbSetMode('hybrid')" aria-pressed="true" title="用本地向量模型做语义检索，适合描述性提问">AI 语义</button>
+                onclick="kbSetMode('hybrid')" aria-pressed="true" title="关键词命中后按语义相似度排序；一个词都没命中时视为无结果">智能排序</button>
         <button type="button" class="kb-mode-btn" id="kb-mode-lexical" data-mode="lexical"
-                onclick="kbSetMode('lexical')" aria-pressed="false" title="按标题与正文精确匹配关键词">关键词</button>
+                onclick="kbSetMode('lexical')" aria-pressed="false" title="只按标题/正文的字面匹配，不做语义扩展">关键词</button>
+        <button type="button" class="kb-mode-btn" id="kb-mode-semantic" data-mode="semantic"
+                onclick="kbSetMode('semantic')" aria-pressed="false" title="按语义相似度召回，适合「意思相近但字面不同」的探索；数量为估算">语义探索</button>
       </div>
       <label class="kb-sort-wrap">
         <span class="kb-sort-label">排序</span>

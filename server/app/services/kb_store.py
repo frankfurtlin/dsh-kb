@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-from app.config import DATA_DIR, INDEX_FILE
+from app.config import DATA_DIR, INDEX_FILE, SEMANTIC_MIN_SCORE
 from app.services import kb_index
 
 CLASSIFY_VERSION = 1  # AI 分类提示词/规则版本：升级会让所有报告重新分类
@@ -28,6 +28,10 @@ CLASSIFY_VERSION = 1  # AI 分类提示词/规则版本：升级会让所有报�
 _BODY_LIMIT = 20000
 _SUMMARY_LIMIT = 180
 _SNIPPET_LIMIT = 160
+
+# P0-1：语义相似度门槛（对「已去中心」的余弦而言），来自 config.SEMANTIC_MIN_SCORE
+# （env KB_SEMANTIC_MIN_SCORE）。bge-small-zh 的原始余弦基线偏高（无关文本 0.3–0.5），
+# 去中心后无关约 0.10–0.30，相关报告通常 ≥0.35。
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS reports (
@@ -607,6 +611,44 @@ def sync(force: bool = False) -> dict:
 # ---------- 查询 ----------
 
 
+def _keyword_tokens(keyword: str) -> list[str]:
+    """把查询拆成词：空格/中英文逗号、分号、竖线都算分隔符。"""
+    return [token for token in re.split(r"[\s,，、;；|]+", (keyword or "").strip()) if token]
+
+
+def _keyword_sql(keyword: str) -> tuple[str, list[str]]:
+    """多词查询按 AND 组合（每个词都要在标题或正文里出现），单词时等价 LIKE。"""
+    tokens = _keyword_tokens(keyword)
+    parts: list[str] = []
+    params: list[str] = []
+    for token in tokens:
+        parts.append("(title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')")
+        params.extend([_like(token), _like(token)])
+    return " AND ".join(parts), params
+
+
+def _lexical_score(title: str, body: str, keyword: str) -> tuple[float, str]:
+    """词法匹配分：整串命中 > 全词命中 > 多词近似命中。"""
+    keyword = (keyword or "").strip().lower()
+    if not keyword:
+        return 0.0, "semantic"
+    if keyword in title:
+        return 1.0, "title"
+    if keyword in body:
+        return 0.55, "body"
+    tokens = [token.lower() for token in _keyword_tokens(keyword) if len(token) >= 2]
+    if len(tokens) > 1:
+        title_hits = sum(1 for token in tokens if token in title)
+        body_hits = sum(1 for token in tokens if token in body)
+        if title_hits == len(tokens):
+            return 0.9, "title"
+        if body_hits == len(tokens):
+            return 0.5, "body"
+        if body_hits >= max(2, len(tokens) - 1):
+            return 0.3, "body"
+    return 0.0, "semantic"
+
+
 def _like(value: str) -> str:
     escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
@@ -694,8 +736,10 @@ def list_reports(
     where: list[str] = []
     params: list[object] = []
     if keyword:
-        where.append("(title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')")
-        params.extend([_like(keyword), _like(keyword)])
+        clause, clause_params = _keyword_sql(keyword)
+        if clause:
+            where.append("(" + clause + ")")
+            params.extend(clause_params)
     if category:
         where.append("category = ?")
         params.append(category)
@@ -780,8 +824,10 @@ def _filter_clause(
     where: list[str] = []
     params: list[object] = []
     if keyword:
-        where.append("(title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')")
-        params.extend([_like(keyword), _like(keyword)])
+        clause, clause_params = _keyword_sql(keyword)
+        if clause:
+            where.append("(" + clause + ")")
+            params.extend(clause_params)
     tag = normalize_tag(tag)
     if tag:
         where.append(
@@ -880,14 +926,15 @@ def search(q: str = "", offset: int = 0, limit: int = 20) -> tuple[list[dict], i
     if not keyword:
         return [], 0
     pattern = _like(keyword)
+    clause, clause_params = _keyword_sql(keyword)
     lowered = keyword.lower()
     conn = _connect()
     try:
         rows = conn.execute(
             "SELECT *, (CASE WHEN title LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END) AS title_hit "
-            "FROM reports WHERE title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' "
+            "FROM reports WHERE " + (clause or "title LIKE ? ESCAPE '\\'") + " "
             "ORDER BY title_hit DESC, CASE WHEN date = '' THEN 1 ELSE 0 END, date DESC, title ASC",
-            [pattern, pattern, pattern],
+            [pattern] + (clause_params if clause else [pattern]),
         ).fetchall()
     finally:
         conn.close()
@@ -1427,6 +1474,26 @@ def vectors_snapshot(
     return rows, (matrix / norms).astype(np.float32)
 
 
+def _centered_cosine(matrix, vector, center) -> "np.ndarray":
+    """去除语料各向异性后的余弦相似度。
+
+    bge 这类中文小模型的原始余弦有很强的"全局偏移"：任何两段中文的相似度都
+    在 0.3–0.5，直接拿 0.28 当门槛等于放行全库。先减去语料中心向量再归一化
+    点积，无关文本会掉到 0.15–0.30，相关文本仍保持在 0.35 以上。
+    """
+    vec = np.asarray(vector, dtype=np.float32).reshape(-1)
+    if center is not None and len(center):
+        flat = np.asarray(center, dtype=np.float32).reshape(-1)
+        vec = vec - flat
+        mat = matrix - flat
+    else:
+        mat = matrix
+    vnorm = float(np.linalg.norm(vec)) or 1.0
+    mnorms = np.linalg.norm(mat, axis=1, keepdims=True)
+    mnorms[mnorms == 0] = 1.0
+    return (mat / mnorms) @ (vec / vnorm)
+
+
 def hybrid_search(
     q: str,
     *,
@@ -1444,11 +1511,14 @@ def hybrid_search(
     include_nodes: bool = True,
     include_articles: bool = True,
     ppr_weight: float = 0.0,
+    mode: str = "hybrid",
 ) -> tuple[list[dict], int]:
     """语义 + 词法混合检索；返回 (items, total)。
 
-    词法分：标题命中 1.0、正文命中 0.55；语义分为余弦相似度（<0 记 0）。
-    只在「语义 > 0.28 或词法 > 0」的候选里排序，避免语义噪声污染结果。
+    词法分：标题命中 1.0、正文命中 0.55；语义分为去中心余弦（<0 记 0）。
+    mode="hybrid"（默认）：词法命中是硬门槛，语义只负责排序——查不到词就返回空，
+    避免"任何查询都返回全库"；mode="semantic"：走自适应语义召回（去中心余弦
+    ≥SEMANTIC_MIN_SCORE），适合"意思相近但字面不同"的探索。
     """
     keyword = (q or "").strip()
     rows, matrix = vectors_snapshot(
@@ -1460,25 +1530,29 @@ def hybrid_search(
         view=view,
     )
     vector = np.asarray(query_vector, dtype=np.float32)
-    norm = float(np.linalg.norm(vector)) or 1.0
+    center = matrix.mean(axis=0, keepdims=True) if getattr(matrix, "size", 0) else None
     # 报告向量可能还没补齐（刚重启/新库），但这不影响 wiki 页与文章候选。
-    cosine = matrix @ (vector / norm) if rows else np.zeros(0)
+    cosine = _centered_cosine(matrix, vector, center) if rows else np.zeros(0)
     lowered = keyword.lower()
+    # semantic 模式再加一条"相对门槛"：只保留和 top1 差距不大的候选，
+    # 避免一个泛化查询把半库都算成"语义相关"。
+    cutoff = SEMANTIC_MIN_SCORE
+    if mode == "semantic" and lowered and getattr(cosine, "size", 0):
+        cutoff = max(cutoff, float(np.max(cosine)) * 0.85)
     scored = []
     for index, row in enumerate(rows):
         title = (row["title"] or "").lower()
         body = (row["body"] or "").lower()
-        lexical = 0.0
-        match = "semantic"
-        if lowered:
-            if lowered in title:
-                lexical, match = 1.0, "title"
-            elif lowered in body:
-                lexical, match = 0.55, "body"
+        lexical, match = _lexical_score(title, body, lowered)
         similarity = max(0.0, float(cosine[index]))
-        if lowered and lexical == 0.0 and similarity < 0.28:
-            continue
-        if not lowered and similarity < 0.15:
+        if lowered:
+            if mode == "semantic":
+                if similarity < cutoff:
+                    continue
+            elif lexical == 0.0:
+                # P0-1：混合模式必须词法命中，语义不单独召回。
+                continue
+        elif similarity < cutoff:
             continue
         score = semantic_weight * similarity + lexical_weight * lexical
         if score <= 0.05:
@@ -1513,6 +1587,9 @@ def hybrid_search(
                 model=model,
                 semantic_weight=semantic_weight,
                 lexical_weight=lexical_weight,
+                mode=mode,
+                center=center,
+                cutoff=cutoff,
             )
         )
     if include_articles and not filtered:
@@ -1523,6 +1600,9 @@ def hybrid_search(
                 model=model,
                 semantic_weight=semantic_weight,
                 lexical_weight=lexical_weight,
+                mode=mode,
+                center=center,
+                cutoff=cutoff,
             )
         )
     scored.sort(key=lambda entry: (-entry[0], (entry[3]["date"] if not isinstance(entry[3], dict) else "") or "",
@@ -1685,30 +1765,30 @@ def article_vectors(*, model: str):
 
 
 def _article_candidates(keyword: str, query_vector, *, model: str,
-                        semantic_weight: float, lexical_weight: float) -> list[tuple]:
+                        semantic_weight: float, lexical_weight: float,
+                        mode: str = "hybrid", center=None,
+                        cutoff: float = SEMANTIC_MIN_SCORE) -> list[tuple]:
     """把 LLM Wiki 文章也当成可检索文档（标题/总览/正文参与词法，向量参与语义）。"""
     rows, matrix = article_vectors(model=model)
     if not rows:
         return []
     vector = np.asarray(query_vector, dtype=np.float32)
-    norm = float(np.linalg.norm(vector)) or 1.0
-    cosine = matrix @ (vector / norm)
+    cosine = _centered_cosine(matrix, vector, center)
     lowered = (keyword or "").lower()
     out = []
     for index, row in enumerate(rows):
         plain = _wiki_plain_text(row["body_md"])
         title = (row["title"] or "").lower()
         haystack = f"{row['subject']} {row['overview']} {plain}".lower()
-        lexical, match = 0.0, "semantic"
-        if lowered:
-            if lowered in title:
-                lexical, match = 1.0, "title"
-            elif lowered in haystack:
-                lexical, match = 0.55, "body"
+        lexical, match = _lexical_score(title, haystack, lowered)
         similarity = max(0.0, float(cosine[index]))
-        if lowered and lexical == 0.0 and similarity < 0.28:
-            continue
-        if not lowered and similarity < 0.15:
+        if lowered:
+            if mode == "semantic":
+                if similarity < cutoff:
+                    continue
+            elif lexical == 0.0:
+                continue
+        elif similarity < cutoff:
             continue
         score = semantic_weight * similarity + lexical_weight * lexical
         if score <= 0.05:
@@ -1737,29 +1817,29 @@ def _article_candidates(keyword: str, query_vector, *, model: str,
 
 
 def _node_candidates(keyword: str, query_vector, *, model: str,
-                     semantic_weight: float, lexical_weight: float) -> list[tuple]:
+                     semantic_weight: float, lexical_weight: float,
+                     mode: str = "hybrid", center=None,
+                     cutoff: float = SEMANTIC_MIN_SCORE) -> list[tuple]:
     """把 wiki 页当成「一篇只讲一个实体的文档」参与同一套混合打分。"""
     rows, matrix = node_vectors(model=model)
     if not rows:
         return []
     vector = np.asarray(query_vector, dtype=np.float32)
-    norm = float(np.linalg.norm(vector)) or 1.0
-    cosine = matrix @ (vector / norm)
+    cosine = _centered_cosine(matrix, vector, center)
     lowered = (keyword or "").lower()
     out = []
     for index, row in enumerate(rows):
         title = (row["title"] or "").lower()
         body = (row["body_md"] or "").lower()
-        lexical, match = 0.0, "semantic"
-        if lowered:
-            if lowered in title:
-                lexical, match = 1.0, "title"
-            elif lowered in body:
-                lexical, match = 0.55, "body"
+        lexical, match = _lexical_score(title, body, lowered)
         similarity = max(0.0, float(cosine[index]))
-        if lowered and lexical == 0.0 and similarity < 0.28:
-            continue
-        if not lowered and similarity < 0.15:
+        if lowered:
+            if mode == "semantic":
+                if similarity < cutoff:
+                    continue
+            elif lexical == 0.0:
+                continue
+        elif similarity < cutoff:
             continue
         score = semantic_weight * similarity + lexical_weight * lexical
         if score <= 0.05:

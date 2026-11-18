@@ -661,19 +661,61 @@ a { color: var(--kb-accent-text); }
   .kb-side {
     border-right: 0;
     border-bottom: 1px solid var(--kb-border);
-    padding: 12px 12px 10px;
-    max-height: 46vh;
+    padding: 10px 12px 8px;
+    max-height: none;
   }
-  .kb-nav { flex-direction: row; }
-  .kb-navitem { flex: 1; justify-content: center; gap: 8px; }
-  .kb-cats { flex-direction: row; flex-wrap: wrap; }
-  .kb-cat { padding: 4px 9px; }
+  /* P0-2：窄屏导航改成横向滚动条，避免 7 个导航项被等分后逐字换行 */
+  .kb-nav {
+    flex-direction: row;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+  }
+  .kb-nav::-webkit-scrollbar { display: none; }
+  .kb-navitem {
+    flex: 0 0 auto;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 10px;
+    font-size: 12.5px;
+    white-space: nowrap;
+  }
+  .kb-navcount { font-size: 11px; }
+  .kb-cats {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 6px;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+  }
+  .kb-cats::-webkit-scrollbar { display: none; }
+  .kb-cat { flex: 0 0 auto; white-space: nowrap; padding: 4px 9px; }
   .kb-series-list { flex-direction: row; flex-wrap: wrap; margin-left: 0; padding-left: 0; border-left: 0; }
-  .kb-dates { flex-direction: row; flex-wrap: wrap; }
-  .kb-toolbar { flex-wrap: wrap; position: static; }
+  .kb-dates { display: none; }
+  /* 标签与快捷日期是"进阶筛选"，窄屏收起，保证首屏至少两张卡片 */
+  .kb-sec:has(.kb-tags) { display: none; }
+  .kb-dates { display: none; }
+  .kb-range {
+    flex-direction: row;
+    align-items: flex-end;
+    gap: 8px;
+    margin: 0 8px 8px;
+  }
+  .kb-range-row { flex: 1 1 0; min-width: 0; gap: 4px; }
+  .kb-range-row > span { width: auto; }
+  .kb-date-input { padding: 3px 5px; font-size: 12px; }
+  .kb-range-go { align-self: stretch; padding: 4px 8px; white-space: nowrap; }
+  .kb-sec-head { padding-top: 6px; }
+  .kb-toolbar { flex-wrap: wrap; position: static; gap: 6px; padding: 6px 0; }
   .kb-search-wrap { max-width: none; flex-basis: 100%; }
+  .kb-mode { gap: 4px; }
+  .kb-mode-btn { padding: 4px 7px; font-size: 11.5px; }
+  .kb-sort-wrap { gap: 4px; }
+  .kb-toolbar .kb-btn { padding: 5px 8px; font-size: 12px; }
   .kb-result { margin-left: 0; }
-  .kb-main { padding: 12px 12px 24px; }
+  .kb-main { padding: 10px 12px 24px; }
   .kb-drawer-panel { width: 100%; }
 }
 

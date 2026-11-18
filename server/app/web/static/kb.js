@@ -30,6 +30,7 @@ var _kbTotal = 0;
 var _kbTimer = null;
 var _kbDrawerPath = '';
 var _kbEmbedAvailable = false;
+var _kbSearchMode = '';
 var _kbPublicBase = '';
 var _kbPublicPaths = {};
 var _kbSelectMode = false;
@@ -121,21 +122,18 @@ async function kbLoadEmbedStatus() {
 }
 
 function kbRenderMode() {
-  ['hybrid', 'lexical'].forEach(function (mode) {
+  ['hybrid', 'lexical', 'semantic'].forEach(function (mode) {
     var btn = kbEl('kb-mode-' + mode);
     if (!btn) return;
     var on = kbState.mode === mode;
     btn.classList.toggle('is-on', on);
     btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-    btn.disabled = mode === 'hybrid' && !_kbEmbedAvailable;
-    if (mode === 'hybrid') btn.title = _kbEmbedAvailable
-      ? '用本地向量模型做语义检索，适合描述性提问'
-      : '语义索引还在生成中，暂时用关键词检索';
+    btn.disabled = (mode === 'hybrid' || mode === 'semantic') && !_kbEmbedAvailable;
   });
 }
 
 function kbSetMode(mode) {
-  if (mode === 'hybrid' && !_kbEmbedAvailable) { showToast('语义索引还在生成中，先用关键词检索'); return; }
+  if ((mode === 'hybrid' || mode === 'semantic') && !_kbEmbedAvailable) { showToast('语义索引还在生成中，先用关键词检索'); return; }
   if (kbState.mode === mode) return;
   kbState.mode = mode;
   kbState.offset = 0;
@@ -314,13 +312,15 @@ async function kbLoad(force) {
   var list = kbEl('kb-list');
   if (list) list.innerHTML = '<div class="kb-loading"><span class="kb-spinner" aria-hidden="true"></span>加载知识库…</div>';
   var searching = !!kbState.q;
-  var url = (searching && kbState.mode === 'hybrid')
-    ? API + '/kb/search?' + kbQuery() + '&mode=hybrid'
+  var semanticMode = searching && (kbState.mode === 'hybrid' || kbState.mode === 'semantic');
+  var url = semanticMode
+    ? API + '/kb/search?' + kbQuery() + '&mode=' + encodeURIComponent(kbState.mode)
     : API + '/kb?' + kbQuery() + (force ? '&refresh=1' : '');
   var data = await safeFetch(url);
   if (data === null) return;
   _kbItems = data.items || [];
   _kbTotal = data.total || 0;
+  _kbSearchMode = data.mode || '';
   kbRenderList();
   kbRenderBatchbar();
   kbRenderFilterbar();
@@ -336,7 +336,13 @@ function kbResultLabel() {
   if (!_kbTotal) return '没有结果';
   var from = kbState.offset + 1;
   var to = Math.min(kbState.offset + _kbItems.length, _kbTotal);
-  return from + '–' + to + ' / ' + _kbTotal;
+  var suffix = '';
+  if (kbState.q) {
+    if (_kbSearchMode === 'semantic') suffix = ' 篇语义相关';
+    else if (_kbSearchMode === 'hybrid') suffix = ' 篇含关键词';
+    else suffix = ' 篇匹配';
+  }
+  return from + '–' + to + ' / ' + _kbTotal + suffix;
 }
 
 function kbRenderList() {

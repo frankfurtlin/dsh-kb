@@ -436,6 +436,13 @@ async function main() {
     check(`正文检索「${bodyQuery}」有命中且高亮`, bodyApi.total > 0 && bodyHit > 0, `api=${bodyApi.total} marks=${bodyHit}`)
     await page.click('#kb-search-clear')
     await page.waitForTimeout(500)
+    check('P0-1 三种检索模式并存', (await page.locator('.kb-mode-btn').count()) === 3)
+    await page.fill('#kb-search', 'zzz-no-such-keyword')
+    await page.waitForTimeout(900)
+    check('P0-1 垃圾词不再返回全库', (await page.locator('#kb-result').innerText()).includes('没有结果'),
+      await page.locator('#kb-result').innerText())
+    await page.fill('#kb-search', '')
+    await page.waitForTimeout(700)
     check('清空搜索后恢复全量', (await page.locator('.kb-item').count()) === Math.min(tree.total, 20))
 
     // ---------- 排序 / 分页 ----------
@@ -632,6 +639,18 @@ async function main() {
     await page.fill('#kb-search', '全景')
     await page.waitForTimeout(700)
     check('移动端：搜索可用', (await page.locator('.kb-item').count()) > 0)
+    const mobileMetrics = await page.evaluate(() => {
+      const nav = [...document.querySelectorAll('.kb-navitem')]
+      const cards = [...document.querySelectorAll('.kb-item')]
+      return {
+        navWrapped: nav.filter((el) => el.getBoundingClientRect().height > 44).length,
+        overflowX: document.documentElement.scrollWidth > window.innerWidth + 1,
+        visibleCards: cards.filter((el) => el.getBoundingClientRect().top < window.innerHeight).length,
+      }
+    })
+    check('P0-2 移动端：导航不逐字换行', mobileMetrics.navWrapped === 0, `wrapped=${mobileMetrics.navWrapped}`)
+    check('P0-2 移动端：无横向溢出', !mobileMetrics.overflowX)
+    check('P0-2 移动端：首屏至少 2 张卡片', mobileMetrics.visibleCards >= 2, `visible=${mobileMetrics.visibleCards}`)
     await shot(page, '06-mobile.png', true)
 
     // P13+：文章时间线/相关文章 + 图谱画布
@@ -661,6 +680,14 @@ async function main() {
     const canvasCount = await page.locator('#kb-canvas').count()
     check('图谱画布页可打开', canvasResponse.status() === 200 && canvasCount === 1,
       `status=${canvasResponse.status()} canvas=${canvasCount}`)
+    await page.waitForFunction(() => /个节点/.test(document.getElementById('kb-meta')?.textContent || ''), null, { timeout: 20000 })
+    const canvasPixels = await page.evaluate(() => document.getElementById('kb-canvas').toDataURL().length)
+    check('P0-3 画布：布局完成后有像素输出', canvasPixels > 8000, `dataUrl=${canvasPixels}`)
+    const t0 = Date.now()
+    await page.reload({ waitUntil: 'load' })
+    await page.waitForFunction(() => /个节点/.test(document.getElementById('kb-meta')?.textContent || ''), null, { timeout: 5000 })
+    const reloadMs = Date.now() - t0
+    check('P0-3 画布：二次进入命中布局缓存', reloadMs < 3000, `${reloadMs}ms`)
     await page.screenshot({ path: join(OUT, '22-graph-canvas.png'), fullPage: false })
     await page.goto(ORIGIN + '/', { waitUntil: 'load' })
 

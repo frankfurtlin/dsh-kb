@@ -37,7 +37,11 @@ def answer(question: str, *, limit: int = _MAX_CITATIONS) -> dict:
     if not kb_ai.is_configured():
         return {"ok": False, "error": "AI 未配置：缺少 DSH AI 桥密钥（server/.ai-secret）"}
     kb_store.sync()
-    result = kb_search.search(text, limit=max(_MAX_CITATIONS, 10), offset=0, mode="auto")
+    # P0-1 之后 hybrid 模式要求词法命中，而自然语言提问往往一个词都不命中；
+    # RAG 需要「宁可放宽召回、让模型判断相关性」，所以先用语义召回，再用混合兜底。
+    result = kb_search.search(text, limit=max(_MAX_CITATIONS, 10), offset=0, mode="semantic")
+    if not result["items"]:
+        result = kb_search.search(text, limit=max(_MAX_CITATIONS, 10), offset=0, mode="hybrid")
     pool = result["items"]
     items = pool[:_MAX_CITATIONS]
     # 综述文章通常比单篇报告更适合回答跨报告问题：池子里有文章时，保底给一篇位置。
