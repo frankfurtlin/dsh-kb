@@ -259,7 +259,7 @@ SQLite kb.sqlite ── ② 正文摘要 + 全文（≤2 万字）
   一级分类没有变化说明：规则分类在既有 9 类上基本正确，AI 的价值先体现在系列归并与跨类
   主题（如「知乎精读」）。要更严格地度量分类准确率，需要 R5 的评测集。
 
-## 产品体验优化（v0.9 Sprint A）
+## 产品体验优化（v0.9/0.10 Sprint A + B）
 
 来自 `docs/PRODUCT-REVIEW.md` 的第一批修复（P0）。三条都先在生产上量过、再回来补自动化。
 
@@ -283,6 +283,18 @@ SQLite kb.sqlite ── ② 正文摘要 + 全文（≤2 万字）
 - 布局结束后把节点坐标写入 `sessionStorage`（键含路径/节点列表/边数），二次进入直接复用。
 - 实测：首帧 **687ms**（原 1812ms 白屏），二次进入 **71ms**；节点 hover 涟漪/点击脉冲不受影响。
 - 证据截图：`docs/review-shots/{21-search-fixed,22-search-empty,23-mobile-fixed,24-canvas-fast}.png`。
+
+**Sprint B（P1）：键盘、长任务与状态语义**
+- **抽屉焦点陷阱（P1-1）**：抽屉打开后 Tab / Shift+Tab 在抽屉内首尾循环，`Esc` 关闭并把焦点还给
+  打开它的那张卡片；`aria-describedby` 指向摘要区。实测连按 25–30 次 Tab 焦点不逃逸。
+- **AI 问答可感知（P1-2）**：提交后 1 秒内先显示「已找到 N 篇候选报告」并可点开；生成中显示
+  「已用 N 秒 · 正在组织答案」，提供「停止生成」按钮（`AbortController`，取消 < 1 秒）；
+  完成后显示用时与引用来源。检索与生成分成两段反馈，长任务不再是黑盒。
+- **搜索态计数语义（P1-3）**：搜索时左导航「全部」改名为「搜索结果」，分类计数降级为「—」，
+  「全部分类」保持全库数（475）并用 tooltip 说明；分页文案写明「N 篇含关键词 / 语义相关」。
+- **Wiki 索引按钮收敛（P1-4）**：索引页只为「来源已变」的文章保留「重新生成」，正常文章提供
+  「打开 →」进入详情页操作；116 张卡片从 116 个高成本按钮变为 0 个常驻按钮。
+- 证据截图：`docs/review-shots/{25-drawer-focus,26-ask-progress,27-wiki-index-clean}.png`。
 
 ## 结构
 
@@ -449,7 +461,7 @@ iframe 内使用 `/kb/` 这一套。
 ```bash
 # 单元/接口测试（自带临时 reports + 临时索引库，不碰生产数据）
 cd /root/workspace/plugins/dsh-kb/server
-../.venv/bin/python -m pytest        # 66 passed
+../.venv/bin/python -m pytest        # 67 passed
 ../.venv/bin/python -m app.cli_eval  # 检索评测（lexical / hybrid / hybrid+ppr）
 
 # 端到端验收
@@ -458,14 +470,14 @@ node verify-app.mjs      # 后端 + 页面端到端（Playwright 直连 http://1
 node verify-proxy.mjs    # host 半（lib/index.js）隔离验收，不需要装进 DSH
 ```
 
-最近一次结果（2026-11-18，v0.9 体验优化后）：
+最近一次结果（2026-11-19，v0.10 体验优化 Sprint B 后）：
 
-- `pytest` **66 passed** —— 索引同步与分类/系列/日期派生、列表筛选（分类/系列/日期区间/
+- `pytest` **67 passed** —— 索引同步与分类/系列/日期派生、列表筛选（分类/系列/日期区间/
   半开区间/分页/排序）、标题与正文检索（snippet/match）、详情 preview、已读/收藏往返、
   非法路径 400、批量读写、筛选态树计数、公开外链（外链生成、匿名 200、内链改写、附件白名单、
   目录页、越权 404、取消公开立即生效、老站公开状态迁移）、P0/P1（指纹缓存、gzip、
   统一错误体、healthz、版本号、X-Process-Time、AI 分类存储与同步回归、图谱节点编译/增量/阈值/API/HTML、共现边与 PPR）。
-- `verify-app.mjs` **112/112 passed** —— 树/列表/检索/前缀反代/重定向；分类、系列、快捷日期
+- `verify-app.mjs` **119/119 passed** —— 树/列表/检索/前缀反代/重定向；分类、系列、快捷日期
   与**自定义日期区间**（含倒置拒绝、筛选条、清除恢复）；健康检查、统一错误体、静态指纹
   长缓存、无指纹短缓存、gzip；标题与正文搜索高亮；排序与分页；详情抽屉（preview、自动已读、
   收藏、打开原文）；AI sidecar 卡片/抽屉；向量与问答接口的降级路径；周报面板（概览/主题/统计）；
@@ -477,7 +489,7 @@ node verify-proxy.mjs    # host 半（lib/index.js）隔离验收，不需要装
 - `verify-proxy.mjs` **11/11 passed** —— 导出与注册、`/kb/`、`/kb/api/kb`、`/kb/static/*`、
   AI 桥鉴权（无密钥/错密钥都按 404 隐藏）
   反代、`/kb?x=1 → 302 /kb/?x=1`、401/403 鉴权闸门、上游未启动时 502 中文提示。
-- `verify-dsh.mjs` **24/24 passed**（真实 DSH 面板内；公开开关是状态自适应，初始已公开时会多 1 项）—— 匿名 401、侧栏「知识库」行、
+- `verify-dsh.mjs` **26/26 passed**（真实 DSH 面板内；公开开关是状态自适应，初始已公开时会多 1 项）—— 匿名 401、侧栏「知识库」行、
   iframe `/kb/`、首屏卡片/计数/分类、搜索高亮、分类筛选、详情抽屉与自动已读、公开开关
   （抽屉按钮 / 复制链接按钮出现与消失，状态自适应）、AI 问答（真实调模型，答案 + 引用）、
   周报面板、**知识图谱索引**（284 节点 / 3109 引用 / 1459 互链）、**LLM Wiki 文章**（卡片 → 文章页，
@@ -516,6 +528,9 @@ AI 问答与周报要调模型（单次 20–40s），host 半对 `/kb/api/kb/as
 | `25-graph-index-studio.png` | 图谱索引（编辑排版：指标条 + 图例 + 双栏节点列表） |
 | `27-hover-ripple.png` | hover 节点时的水波纹（三圈同心圆外扩） |
 | `28-click-pulse.png` | 点击节点后的金色脉冲（沿触须向邻居扩散） |
+| `25-drawer-focus.png` | 抽屉焦点陷阱：Tab 循环留在抽屉内、Esc 归还卡片（`docs/review-shots/`） |
+| `26-ask-progress.png` | AI 问答进度：候选报告先出现、计时与「停止生成」 |
+| `27-wiki-index-clean.png` | Wiki 索引页收敛：卡片只留「打开 →」，过期文章才给重新生成 |
 | `26-graph-canvas-studio.png` | 图谱画布（暖纸底 + 金/薰衣草/玫瑰配色；节点为玻璃光球、背景有水母/光球纹理，两簇：Minecraft 谱系与 A 股） |
 
 语法门：`node --check lib/index.js && node --check client.js && node --check verification/verify-app.mjs && node --check verification/verify-proxy.mjs`；

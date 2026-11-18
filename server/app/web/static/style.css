@@ -1146,3 +1146,15 @@ button.kb-tag:hover { text-decoration: underline; }
 [data-theme="dark"] .kb-badge-graph { color: #93c5fd; }
 .kb-item-doc .kb-item-open { color: inherit; text-decoration: none; }
 .kb-item-doc .kb-item-open:hover { text-decoration: underline; }
+
+/* P1-2：AI 问答的候选反馈与耗时提示 */
+.kb-ask-cand {
+  border: 1px solid var(--kb-border);
+  background: var(--kb-panel-2);
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+.kb-ask-cand-head { font-size: 12px; color: var(--kb-text-3); margin-bottom: 4px; }
+.kb-ask-cand ul { margin: 0; padding-left: 18px; }
+.kb-ask-cand li { font-size: 13px; line-height: 1.7; }

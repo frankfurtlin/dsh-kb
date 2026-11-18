@@ -124,3 +124,22 @@ def test_article_html_404_and_bad_slug(client, monkeypatch):
         assert "没有可达标的候选" in str(exc)
     else:  # pragma: no cover - 不允许静默通过
         raise AssertionError("应当抛出 WikiError")
+
+
+def test_wiki_index_hides_per_card_regenerate_for_live_articles(client, monkeypatch):
+    """P1-4：索引页只给过期文章留「重新生成」，正常文章点进详情页再操作。"""
+    client.get("/api/kb")  # 同步
+    _seed_all()
+    _enable_ai(monkeypatch)
+    slug = f"topic-{TAG}"
+    assert kb_wiki.generate(slug)["ok"] is True
+
+    html = client.get("/wiki/").text
+    assert "打开 →" in html
+    # 索引页顶部只有一个「生成一篇」（gen('', ...)）；正常文章不应再挂按钮。
+    assert html.count('onclick="gen(') == 1
+
+    kb_store.mark_wiki_article_stale(slug)
+    html = client.get("/wiki/").text
+    assert html.count('onclick="gen(') == 2
+    assert "来源已变 · 建议重新生成" in html

@@ -29,7 +29,10 @@ var _kbItems = [];
 var _kbTotal = 0;
 var _kbTimer = null;
 var _kbDrawerPath = '';
+var _kbDrawerReturnFocus = null;
+var _kbLastClosedPath = '';
 var _kbEmbedAvailable = false;
+var _kbGlobalTotal = 0;
 var _kbSearchMode = '';
 var _kbPublicBase = '';
 var _kbPublicPaths = {};
@@ -150,6 +153,7 @@ function kbBindSearch() {
 }
 
 function kbBindKeys() {
+  document.addEventListener('keydown', kbTrapDrawerKeys);
   document.addEventListener('keydown', function (event) {
     var meta = event.metaKey || event.ctrlKey;
     if (meta && String(event.key).toLowerCase() === 'k') {
@@ -192,6 +196,7 @@ async function kbLoadTree(force) {
   var data = await safeFetch(url);
   if (!data) return;
   _kbTree = data;
+  if (!kbState.q) _kbGlobalTotal = data.total || 0;
   kbRenderCounts();
   kbRenderCats();
   kbRenderTags();
@@ -226,6 +231,8 @@ function kbRenderCounts() {
       if (view === 'all') btn.title = kbState.q ? '搜索结果（含报告、LLM Wiki 文章与图谱节点）' : '';
     }
   });
+  var allLabel = document.querySelector('.kb-navitem[data-view="all"] .kb-navlabel');
+  if (allLabel) allLabel.textContent = kbState.q ? '搜索结果' : '全部';
   var subtotal = kbEl('kb-subtotal');
   if (subtotal && visible) subtotal.textContent = visible + (kbState.q ? ' 条结果 · 含 Wiki/图谱条目' : ' 篇报告 · 分类浏览与全文检索');
 }
@@ -234,16 +241,19 @@ function kbRenderCats() {
   var box = kbEl('kb-cats');
   if (!box) return;
   var tree = _kbTree || { categories: [], series: [] };
-  var html = '<button type="button" class="kb-cat" data-cat="" aria-pressed="' +
+  var allCount = kbState.q ? (_kbGlobalTotal || tree.total || 0) : kbVisibleTotal();
+  var allTitle = kbState.q ? '全库报告数（不随搜索变化）' : '';
+  var html = '<button type="button" class="kb-cat" data-cat="" title="' + allTitle + '" aria-pressed="' +
     (kbState.category ? 'false' : 'true') + '" onclick="kbSetCategory(\'\')">' +
-    '<span class="kb-cat-name">全部分类</span><span class="kb-cat-n">' + kbVisibleTotal() + '</span></button>';
+    '<span class="kb-cat-name">全部分类</span><span class="kb-cat-n">' + allCount + '</span></button>';
   (tree.categories || []).forEach(function (cat) {
     var active = kbState.category === cat.name;
     html += '<button type="button" class="kb-cat kb-cat-' + kbCatSlug(cat.name) + '" ' +
       'data-cat="' + escAttr(cat.name) + '" aria-pressed="' + (active ? 'true' : 'false') + '" ' +
+      'title="' + (kbState.q ? '全库该分类数（不随搜索变化）' : '') + '" ' +
       'onclick="kbSetCategory(this.dataset.cat)">' +
       '<span class="kb-cat-name">' + esc(cat.name) + '</span>' +
-      '<span class="kb-cat-n">' + cat.count + '</span></button>';
+      '<span class="kb-cat-n">' + (kbState.q ? '—' : cat.count) + '</span></button>';
     if (active) {
       var series = (tree.series || []).filter(function (row) { return row.category === cat.name; });
       if (series.length) {
@@ -761,6 +771,9 @@ function kbOpenDrawer(index) {
   var drawer = kbEl('kb-drawer');
   if (!drawer) return;
   drawer.classList.remove('bl-hidden');
+  if (document.activeElement && document.activeElement !== document.body) {
+    _kbDrawerReturnFocus = document.activeElement;
+  }
   kbFillDrawer(item);
   kbLoadDetail(item.path);
   kbMarkRead(item, item.path);
@@ -855,7 +868,37 @@ async function kbDrawerMarkRead() {
 function kbCloseDrawer() {
   var drawer = kbEl('kb-drawer');
   if (drawer) drawer.classList.add('bl-hidden');
+  _kbLastClosedPath = _kbDrawerPath;
   _kbDrawerPath = '';
+  // 焦点归还：优先回到打开抽屉的那张卡片，其次回到之前聚焦的元素。
+  var card = _kbDrawerReturnFocus && document.contains(_kbDrawerReturnFocus)
+    ? _kbDrawerReturnFocus
+    : null;
+  if (!card) {
+    var path = _kbLastClosedPath;
+    var idx = _kbItems.findIndex(function (item) { return item.path === path; });
+    card = idx >= 0 ? document.querySelectorAll('.kb-item-open')[idx] : null;
+  }
+  _kbDrawerReturnFocus = null;
+  if (card && typeof card.focus === 'function') card.focus();
+}
+
+// P1-1：抽屉打开时把 Tab / Shift+Tab 限制在抽屉内，并支持 Esc 关闭
+function kbTrapDrawerKeys(event) {
+  var drawer = kbEl('kb-drawer');
+  if (!drawer || drawer.classList.contains('bl-hidden')) return;
+  if (event.key === 'Escape') { event.preventDefault(); kbCloseDrawer(); return; }
+  if (event.key !== 'Tab') return;
+  var focusables = Array.prototype.slice.call(drawer.querySelectorAll(
+    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  )).filter(function (el) { return el.offsetParent !== null; });
+  if (!focusables.length) return;
+  var first = focusables[0], last = focusables[focusables.length - 1];
+  if (event.shiftKey && (document.activeElement === first || document.activeElement === drawer)) {
+    event.preventDefault(); last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault(); first.focus();
+  }
 }
 
 
@@ -934,24 +977,85 @@ function kbAskRender(html) {
   result.innerHTML = html;
 }
 
+var _kbAskAbort = null;
+var _kbAskTimer = null;
+var _kbAskStartedAt = 0;
+
+function kbAskResetControls() {
+  var btn = kbEl('kb-ask-submit');
+  var cancel = kbEl('kb-ask-cancel');
+  var hint = kbEl('kb-ask-hint');
+  if (btn) { btn.disabled = false; btn.textContent = '提问'; }
+  if (cancel) cancel.classList.add('bl-hidden');
+  if (hint) hint.textContent = '';
+  if (_kbAskTimer) { clearInterval(_kbAskTimer); _kbAskTimer = null; }
+  _kbAskAbort = null;
+}
+
+function kbAskCancel() {
+  if (_kbAskAbort) _kbAskAbort.abort();
+  kbAskRender('<p class="kb-ask-error">已停止生成。已找到的候选报告仍可点开。</p>');
+  kbAskResetControls();
+}
+
 async function kbAskSubmit() {
   var input = kbEl('kb-ask-input');
   var question = input ? input.value.trim() : '';
   if (!question) { showToast('先写下你的问题'); if (input) input.focus(); return; }
+  if (_kbAskAbort) _kbAskAbort.abort();
   var btn = kbEl('kb-ask-submit');
-  if (btn) { btn.disabled = true; btn.textContent = '思考中…'; }
-  kbAskRender('<div class="kb-loading"><span class="kb-spinner" aria-hidden="true"></span>正在检索报告并组织答案…</div>');
-  var data = await safeFetch(API + '/kb/ask', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question: question }),
-  });
-  if (btn) { btn.disabled = false; btn.textContent = '提问'; }
-  if (!data) { kbAskRender('<p class="kb-ask-error">请求失败，请稍后重试。</p>'); return; }
+  var cancel = kbEl('kb-ask-cancel');
+  var hint = kbEl('kb-ask-hint');
+  if (btn) { btn.disabled = true; btn.textContent = '生成中…'; }
+  if (cancel) cancel.classList.remove('bl-hidden');
+  _kbAskStartedAt = Date.now();
+  if (hint) hint.textContent = '已提交，正在检索相关报告…';
+  if (_kbAskTimer) clearInterval(_kbAskTimer);
+  _kbAskTimer = setInterval(function () {
+    var seconds = Math.round((Date.now() - _kbAskStartedAt) / 1000);
+    if (hint && _kbAskAbort) hint.textContent = '已用 ' + seconds + ' 秒 · 正在组织答案（通常 10–20 秒）';
+  }, 1000);
+  kbAskRender('<div class="kb-loading"><span class="kb-spinner" aria-hidden="true"></span>正在检索相关报告…</div>');
+
+  // P1-2：检索本身 50ms 左右，先给候选人反馈，再等模型组织答案。
+  var candidates = [];
+  var searchData = await safeFetch(API + '/kb/search?q=' + encodeURIComponent(question) + '&mode=semantic&limit=6');
+  if (searchData && (searchData.items || []).length) {
+    candidates = searchData.items.slice(0, 4);
+    var list = candidates.map(function (item) {
+      return '<li><button type="button" class="kb-linkbtn" onclick="kbOpenPath(\'' + escAttr(item.path) + '\')">' +
+        esc(item.title) + '</button></li>';
+    }).join('');
+    kbAskRender('<div class="kb-ask-cand"><div class="kb-ask-cand-head">已找到 ' + searchData.total +
+      ' 篇候选报告，正在据此组织答案…</div><ul>' + list + '</ul></div>' +
+      '<div class="kb-loading"><span class="kb-spinner" aria-hidden="true"></span>模型组织答案中（可随时停止）</div>');
+  }
+
+  var controller = new AbortController();
+  _kbAskAbort = controller;
+  var data = null;
+  try {
+    var response = await fetch(API + '/kb/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: question }),
+      signal: controller.signal,
+    });
+    data = await response.json().catch(function () { return null; });
+  } catch (error) {
+    if (error && error.name === 'AbortError') return;
+    data = null;
+  }
+  if (controller.signal.aborted) return;
+  kbAskResetControls();
+  var seconds = Math.max(1, Math.round((Date.now() - _kbAskStartedAt) / 1000));
+  if (!data) { kbAskRender('<p class="kb-ask-error">请求失败，请稍后重试（已用 ' + seconds + ' 秒）。</p>'); return; }
   if (!data.ok) {
-    kbAskRender('<p class="kb-ask-error">' + esc(data.error || '问答失败') + '</p>');
+    kbAskRender('<p class="kb-ask-error">' + esc(data.error || '问答失败') + '（已用 ' + seconds + ' 秒）</p>');
     return;
   }
+  var hint2 = kbEl('kb-ask-hint');
+  if (hint2) hint2.textContent = '用时 ' + seconds + ' 秒 · 答案只依据引用的报告';
   var html = '<div class="kb-ask-answer">' + kbAskFormat(data.answer || '') + '</div>';
   var citations = data.citations || [];
   if (citations.length) {

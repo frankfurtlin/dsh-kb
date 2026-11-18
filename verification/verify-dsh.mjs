@@ -143,9 +143,18 @@ try {
       `${drawerTitle.slice(0, 20)} len=${drawerText.length}`)
     const unreadAfter = Number(await frame.locator('#count-unread').innerText())
     check('抽屉打开自动已读', unreadAfter === unreadBefore - 1, `${unreadBefore} → ${unreadAfter}`)
+    // P1-1：iframe 内抽屉焦点陷阱
+    let trapped = 0
+    for (let i = 0; i < 20; i++) {
+      await page.keyboard.press('Tab')
+      const inside = await frame.evaluate(() => document.getElementById('kb-drawer').contains(document.activeElement))
+      if (inside) trapped += 1
+    }
+    check('P1-1 iframe 内抽屉焦点不逃逸（20 次 Tab）', trapped === 20, `inside=${trapped}`)
     await page.screenshot({ path: join(OUT, '07-dsh-kb-panel.png'), fullPage: true })
-    await frame.click('.kb-drawer-foot button')
+    await page.keyboard.press('Escape')
     await page.waitForTimeout(300)
+    check('P1-1 Esc 关闭抽屉', await frame.locator('#kb-drawer').evaluate((el) => el.classList.contains('bl-hidden')))
 
     // P6：公开分享（匿名只读外链）—— 状态自适应：按当前按钮 aria-pressed 决定断言方向
     await frame.click('.kb-item-open >> nth=0')

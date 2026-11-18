@@ -160,6 +160,7 @@
                 placeholder="例如：最近一周市场全景里有哪些风险信号？"></textarea>
       <div class="kb-ask-foot">
         <span class="kb-ask-hint" id="kb-ask-hint"></span>
+        <button type="button" class="kb-btn kb-btn-ghost bl-hidden" id="kb-ask-cancel" onclick="kbAskCancel()">停止生成</button>
         <button type="button" class="kb-btn kb-btn-primary" id="kb-ask-submit" onclick="kbAskSubmit()">提问</button>
       </div>
       <div class="kb-ask-result bl-hidden" id="kb-ask-result" aria-live="polite"></div>
@@ -205,7 +206,7 @@
   </main>
 </div>
 
-<div class="kb-drawer bl-hidden" id="kb-drawer" role="dialog" aria-modal="true" aria-labelledby="kb-drawer-title">
+<div class="kb-drawer bl-hidden" id="kb-drawer" role="dialog" aria-modal="true" aria-labelledby="kb-drawer-title" aria-describedby="kb-drawer-body">
   <div class="kb-drawer-backdrop" onclick="kbCloseDrawer()"></div>
   <article class="kb-drawer-panel" tabindex="-1">
     <header class="kb-drawer-head">

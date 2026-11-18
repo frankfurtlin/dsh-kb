@@ -422,10 +422,12 @@ async function main() {
     const searchApi = (await api('/api/kb?q=' + encodeURIComponent('铝业'))).json
     check('标题搜索「铝业」结果一致且高亮', (await page.locator('.kb-item').count()) === Math.min(searchApi.total, 20) &&
       (await page.locator('.kb-item mark').count()) > 0, `api=${searchApi.total}`)
-    const filteredTree = (await api(`/api/kb/tree?q=${encodeURIComponent('铝业')}`)).json
+    // P1-3：搜索态分类计数不再随搜索收敛——「全部分类」显示全库数，具体分类显示「—」，
+    // 避免把「839 条结果」误读成分类规模。
     const filteredAll = (await page.locator('#kb-cats .kb-cat[data-cat=""] .kb-cat-n').innerText()).trim()
-    check('筛选态分类计数随搜索收敛', filteredAll === String(filteredTree.total),
-      `ui=${filteredAll} api=${filteredTree.total}`)
+    const firstCatCount = (await page.locator('#kb-cats .kb-cat').nth(1).locator('.kb-cat-n').innerText()).trim()
+    check('P1-3 搜索态「全部分类」显示全库数', filteredAll === String(tree.total), `ui=${filteredAll} tree=${tree.total}`)
+    check('P1-3 搜索态具体分类计数降级为「—」', firstCatCount === '—', `first=${firstCatCount}`)
     await shot(page, '03-search.png', true)
 
     const bodyQuery = '资产负债率'
@@ -441,7 +443,17 @@ async function main() {
     await page.waitForTimeout(900)
     check('P0-1 垃圾词不再返回全库', (await page.locator('#kb-result').innerText()).includes('没有结果'),
       await page.locator('#kb-result').innerText())
-    await page.fill('#kb-search', '')
+        await page.fill('#kb-search', '铝业')
+    await page.waitForTimeout(900)
+    const countSem = await page.evaluate(() => ({
+      label: document.querySelector('.kb-navitem[data-view="all"] .kb-navlabel').textContent,
+      cats: document.querySelector('.kb-cat[data-cat=""] .kb-cat-n').textContent,
+      result: document.getElementById('kb-result').textContent.trim(),
+    }))
+    check('P1-3 搜索态把「全部」改名为「搜索结果」', countSem.label === '搜索结果', countSem.label)
+    check('P1-3 搜索态分类计数显示全库数', countSem.cats === String(tree.total), `cats=${countSem.cats} tree=${tree.total}`)
+    check('P1-3 分页文案标注命中口径', /篇含关键词|篇匹配|篇语义相关/.test(countSem.result), countSem.result)
+await page.fill('#kb-search', '')
     await page.waitForTimeout(700)
     check('清空搜索后恢复全量', (await page.locator('.kb-item').count()) === Math.min(tree.total, 20))
 
@@ -491,6 +503,27 @@ async function main() {
     check('抽屉收藏写入后端', starredCount === 1, `starred=${starredCount}`)
     await page.click('.kb-drawer-foot button')
     await page.waitForTimeout(300)
+
+    // ---------- P1-1：抽屉焦点陷阱与焦点归还 ----------
+    const opener = page.locator('.kb-item-open').first()
+    await opener.focus()
+    await opener.click()
+    await page.waitForSelector('#kb-drawer:not(.bl-hidden)', { timeout: 5000 })
+    await page.waitForTimeout(300)
+    let trapped = 0
+    for (let i = 0; i < 25; i++) {
+      await page.keyboard.press('Tab')
+      const inside = await page.evaluate(() => document.getElementById('kb-drawer').contains(document.activeElement))
+      if (inside) trapped += 1
+    }
+    check('P1-1 抽屉焦点陷阱（25 次 Tab 不逃逸）', trapped === 25, `inside=${trapped}`)
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+    const focusBack = await page.evaluate(() => ({
+      hidden: document.getElementById('kb-drawer').classList.contains('bl-hidden'),
+      cls: document.activeElement ? document.activeElement.className : '',
+    }))
+    check('P1-1 Esc 关闭后焦点回到卡片', focusBack.hidden && String(focusBack.cls).includes('kb-item-open'), JSON.stringify(focusBack))
 
     // ---------- P1：AI 在界面上的呈现 ----------
     await page.locator('#count-all').click()
@@ -668,6 +701,10 @@ async function main() {
     ])
     check('种子文章写入索引', seededArticles, seedLog.slice(0, 160))
     const detail = await (await fetch(ORIGIN + '/api/wiki/article/topic-verify-a')).json().catch(() => ({}))
+    const wikiIndexHtml = await (await fetch(ORIGIN + '/wiki/')).text()
+    check('P1-4 Wiki 索引页只为过期文章保留重新生成', wikiIndexHtml.split('onclick="gen(').length - 1 <= 2,
+      `genButtons=${wikiIndexHtml.split('onclick="gen(').length - 1}`)
+
     check('文章详情返回时间线与相关文章',
       (detail.timeline || []).length >= 2 && (detail.related || []).length >= 1,
       `timeline=${(detail.timeline || []).length} related=${(detail.related || []).length}`)

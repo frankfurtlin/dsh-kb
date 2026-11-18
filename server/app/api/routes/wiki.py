@@ -105,6 +105,7 @@ blockquote { margin:14px 0; padding:10px 14px; border-left:3px solid var(--accen
 .card h3 { margin:0 0 6px; font-size:16px; }
 .card .meta { font-size:12.5px; color:var(--muted); margin-bottom:8px; }
 .card .excerpt { font-size:13.5px; opacity:.86; }
+.badge.warn { border-color: rgba(180,120,20,.5); color: #9a6b12; background: rgba(230,180,80,.14); }
 .badge { display:inline-block; padding:1px 7px; border-radius:999px; font-size:11.5px;
   background:rgba(79,70,229,.14); color:var(--accent); margin:0 6px 0 0; }
 .actions { margin:18px 0 6px; display:flex; gap:10px; flex-wrap:wrap; }
@@ -158,17 +159,23 @@ def wiki_index_html(request: Request):
     listing = kb_wiki.article_list(limit=200)
     cards = []
     for item in listing["items"]:
-        state = '<span class="badge">过期</span>' if item["state"] != "live" else ""
+        stale = item["state"] != "live"
+        state = '<span class="badge warn">来源已变 · 建议重新生成</span>' if stale else ""
         kind = "主题" if item["kind"] == "topic" else "实体"
         excerpt = html_lib.escape((item["overview"] or "")[:160])
         slug = html_lib.escape(item["slug"])
+        # P1-4：索引页只给「失败/过期」的文章留重新生成按钮，正常文章点进去再操作，
+        # 避免 90+ 张卡片各挂一个高成本按钮。
+        actions = f'<a class="card-link" href="{prefix}/wiki/{slug}">打开 →</a>'
+        if stale:
+            actions += f'<button onclick="gen(\'{slug}\', this)">重新生成</button>'
         cards.append(
             f'<div class="card"><h3><a href="{prefix}/wiki/{slug}">{html_lib.escape(item["title"])}</a></h3>'
             f'<div class="meta">{state}<span class="badge">{kind}</span>'
             f'{item["source_count"]} 篇来源 · {html_lib.escape((item["model"] or "")[:44])} · '
             f'{html_lib.escape(item["generated_at"][:10])}</div>'
             f'<div class="excerpt">{excerpt}…</div>'
-            f'<div class="actions"><button onclick="gen(\'{slug}\', this)">重新生成</button></div></div>'
+            f'<div class="actions">{actions}</div></div>'
         )
     if not cards:
         cards.append(

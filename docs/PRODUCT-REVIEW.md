@@ -217,6 +217,9 @@ Sprint A（P0）已落地并验收，记录在此以免计划文档与现实脱�
 | P0-1 搜索可信度 | 已完成 | hybrid 词法硬门槛 + 去中心余弦 + 三模式；垃圾词从 839 → 0，`铝业` 14 条；`pytest` 新增 5 条回归，`verify-dsh` 增加真实面板空结果断言 |
 | P0-2 移动端 | 已完成 | 导航横向滚动（32px 单行、无竖排）、无横向溢出、360/390 首屏 2 卡；`verify-app` 增加 3 条移动端断言 |
 | P0-3 画布首帧 | 已完成 | 渐进力导向 + sessionStorage 布局缓存：首帧 687ms（原 1812ms），二次进入 71ms；`verify-app` 增加像素输出与缓存命中断言 |
-| P1 / P2 | 未开始 | 待 Sprint B/C（抽屉焦点陷阱、AI 问答进度与取消、计数语义、Wiki 按钮收敛等） |
+| P1-1 抽屉焦点陷阱 | 已完成 | Tab/Shift+Tab 循环 + Esc 归还焦点；`verify-app` 25 次 Tab、`verify-dsh` iframe 20 次 Tab 断言 |
+| P1-2 问答进度与取消 | 已完成 | 候选列表 <2s 出现、计时提示、`AbortController` 停止生成；实测取消 <1s |
+| P1-3 计数语义 | 已完成 | 搜索态「搜索结果」+ 分类「—」+ 分页口径文案；`verify-app` 新增 3 条断言 |
+| P1-4 Wiki 按钮收敛 | 已完成 | 索引页仅过期文章保留重新生成；116 卡 → 0 常驻按钮 |
 
-验收基线：`pytest` 66、`verify-app` 112/112、`verify-proxy` 11/11、`verify-dsh` 24/24。
+验收基线：`pytest` 67、`verify-app` 119/119、`verify-proxy` 11/11、`verify-dsh` 26/26。
