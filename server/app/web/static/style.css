@@ -1096,3 +1096,11 @@ button.kb-tag {
   font-size: 12px;
 }
 button.kb-tag:hover { text-decoration: underline; }
+
+/* 检索结果里的非报告条目（LLM Wiki 文章 / 图谱节点） */
+.kb-badge-wiki { background: color-mix(in srgb, #db2777 14%, transparent); color: #be185d; }
+.kb-badge-graph { background: color-mix(in srgb, #2563eb 14%, transparent); color: #1d4ed8; }
+[data-theme="dark"] .kb-badge-wiki { color: #f9a8d4; }
+[data-theme="dark"] .kb-badge-graph { color: #93c5fd; }
+.kb-item-doc .kb-item-open { color: inherit; text-decoration: none; }
+.kb-item-doc .kb-item-open:hover { text-decoration: underline; }

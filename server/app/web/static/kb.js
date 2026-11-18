@@ -202,17 +202,34 @@ async function kbLoadTree(force) {
   if (hint) hint.textContent = data.total + ' 篇 · ' + (data.dates || []).length + ' 个日期';
 }
 
+function kbVisibleTotal() {
+  // 语义检索的命中数（含文章/节点）可能大于纯词法的 tree.total；搜索时以结果数为准，
+  // 否则侧栏「全部 1」会和列表「1–20 / 826」互相打架。
+  var tree = _kbTree || { total: 0 };
+  if (!kbState.q) return tree.total || 0;
+  return Math.max(tree.total || 0, _kbTotal || 0);
+}
+
 function kbRenderCounts() {
   var tree = _kbTree || { total: 0, unread: 0, starred: 0 };
-  var map = { all: tree.total, unread: tree.unread, starred: tree.starred, public: tree.public || 0 };
+  var visible = kbVisibleTotal();
+  var map = {
+    all: visible,
+    unread: kbState.q ? '—' : tree.unread,
+    starred: kbState.q ? '—' : tree.starred,
+    public: tree.public || 0,
+  };
   Object.keys(map).forEach(function (view) {
     var node = kbEl('count-' + view);
     if (node) node.textContent = map[view];
     var btn = document.querySelector('.kb-navitem[data-view="' + view + '"]');
-    if (btn) btn.setAttribute('aria-pressed', kbState.view === view ? 'true' : 'false');
+    if (btn) {
+      btn.setAttribute('aria-pressed', kbState.view === view ? 'true' : 'false');
+      if (view === 'all') btn.title = kbState.q ? '搜索结果（含报告、LLM Wiki 文章与图谱节点）' : '';
+    }
   });
   var subtotal = kbEl('kb-subtotal');
-  if (subtotal && tree.total) subtotal.textContent = tree.total + ' 篇报告 · 分类浏览与全文检索';
+  if (subtotal && visible) subtotal.textContent = visible + (kbState.q ? ' 条结果 · 含 Wiki/图谱条目' : ' 篇报告 · 分类浏览与全文检索');
 }
 
 function kbRenderCats() {
@@ -221,7 +238,7 @@ function kbRenderCats() {
   var tree = _kbTree || { categories: [], series: [] };
   var html = '<button type="button" class="kb-cat" data-cat="" aria-pressed="' +
     (kbState.category ? 'false' : 'true') + '" onclick="kbSetCategory(\'\')">' +
-    '<span class="kb-cat-name">全部分类</span><span class="kb-cat-n">' + (tree.total || 0) + '</span></button>';
+    '<span class="kb-cat-name">全部分类</span><span class="kb-cat-n">' + kbVisibleTotal() + '</span></button>';
   (tree.categories || []).forEach(function (cat) {
     var active = kbState.category === cat.name;
     html += '<button type="button" class="kb-cat kb-cat-' + kbCatSlug(cat.name) + '" ' +
@@ -308,6 +325,8 @@ async function kbLoad(force) {
   kbRenderBatchbar();
   kbRenderFilterbar();
   kbRenderPager();
+  kbRenderCounts();
+  kbRenderCats();
   var result = kbEl('kb-result');
   if (result) result.textContent = kbResultLabel();
   if (kbState.q) kbPushHistory(kbState.q);
@@ -341,7 +360,30 @@ function kbTagChips(tags, cls) {
   }).join('') + '</div>';
 }
 
+function kbDocCard(item) {
+  var isArticle = item.kind === 'article';
+  var kindLabel = isArticle ? 'LLM Wiki' : '图谱节点';
+  var meta = isArticle
+    ? ((item.source_count || 0) + ' 篇来源 · ' + (item.series || ''))
+    : ((item.entity_type || '节点') + ' · ' + (item.report_count || 0) + ' 篇报告提及');
+  var summary = item.summary || item.snippet || '';
+  return '<article class="kb-item kb-item-doc" data-kind="' + escAttr(item.kind) + '">' +
+    '<div class="kb-item-top">' +
+      '<span class="kb-badge ' + (isArticle ? 'kb-badge-wiki' : 'kb-badge-graph') + '">' + kindLabel + '</span>' +
+      '<span class="kb-item-series">' + esc(meta) + '</span>' +
+      '<span class="kb-item-spacer"></span>' +
+      (item.date ? '<time class="kb-item-date">' + kbFmtDate(item.date) + '</time>' : '') +
+    '</div>' +
+    '<h3 class="kb-item-title"><a class="kb-item-open" href="' + escAttr(item.url || ('wiki/' + item.slug)) + '">' +
+      kbHighlight(item.title, kbState.q) + '</a></h3>' +
+    '<p class="kb-item-summary">' + kbHighlight(summary, kbState.q) + '</p>' +
+    '<div class="kb-item-foot"><span class="kb-item-size">' +
+      (isArticle ? '模型撰写 · 可点击阅读全文' : '确定性聚合 · 可点击查看节点') + '</span></div>' +
+  '</article>';
+}
+
 function kbCard(item, index) {
+  if (item.kind === 'article' || item.kind === 'node') return kbDocCard(item);
   var searching = !!kbState.q;
   // 搜索时优先显示命中片段；平时优先显示 AI 摘要（信息密度高于正文首个 <p>）。
   var summary = searching

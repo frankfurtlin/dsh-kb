@@ -106,17 +106,20 @@ def _embed_worker(stop_event: threading.Event) -> None:
         try:
             stats = kb_store.embed_stats(model)
             nodes = kb_store.node_embed_stats(model)
-            if stats["pending"] <= 0 and nodes["pending"] <= 0:
+            articles = kb_store.article_embed_stats(model)
+            if stats["pending"] <= 0 and nodes["pending"] <= 0 and articles["pending"] <= 0:
                 logger.info(
-                    "向量索引已完整：报告 %s/%s，图谱节点 %s/%s",
+                    "向量索引已完整：报告 %s/%s，图谱节点 %s/%s，Wiki 文章 %s/%s",
                     stats["embedded"], stats["total"], nodes["embedded"], nodes["total"],
+                    articles["embedded"], articles["total"],
                 )
                 return
-            result = (
-                kb_search.build_pending(config.EMBED_BATCH)
-                if stats["pending"] > 0
-                else kb_search.build_pending_nodes(config.EMBED_BATCH)
-            )
+            if stats["pending"] > 0:
+                result = kb_search.build_pending(config.EMBED_BATCH)
+            elif nodes["pending"] > 0:
+                result = kb_search.build_pending_nodes(config.EMBED_BATCH)
+            else:
+                result = kb_search.build_pending_articles(config.EMBED_BATCH)
             if not result.get("ok") or not result.get("embedded"):
                 logger.warning("向量补齐未产生进展：%s", result)
                 return

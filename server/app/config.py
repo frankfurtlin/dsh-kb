@@ -136,7 +136,7 @@ WIKI_AUTO = os.environ.get("KB_WIKI_AUTO", "1").strip().lower() not in ("0", "fa
 WIKI_BATCH = max(1, int(os.environ.get("KB_WIKI_BATCH") or 1))
 WIKI_INTERVAL = max(30.0, float(os.environ.get("KB_WIKI_INTERVAL") or 180))
 # 候选阈值：主题/实体覆盖多少篇报告才写文章；单篇最多引几篇来源。
-WIKI_MIN_REPORTS = max(1, int(os.environ.get("KB_WIKI_MIN_REPORTS") or 3))
+WIKI_MIN_REPORTS = max(1, int(os.environ.get("KB_WIKI_MIN_REPORTS") or 2))
 WIKI_MAX_SOURCES = max(3, int(os.environ.get("KB_WIKI_MAX_SOURCES") or 12))
 # 每篇来源送给模型的摘要/正文长度上限（控制上下文与费用）。
 WIKI_SOURCE_CHARS = max(200, int(os.environ.get("KB_WIKI_SOURCE_CHARS") or 900))

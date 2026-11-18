@@ -285,6 +285,11 @@ def generate(slug: str, force: bool = False) -> dict:
         now = kb_store._now()
         model = kb_ai.model_label()
         article = _parse_article(candidate, payload, model, now)
+        dated = sorted((src for src in sources if src.get("date")), key=lambda src: src["date"])
+        if len(dated) >= 2:
+            lines = ["", "## 时间线", ""]
+            lines += [f"- {src['date']} · {src['title']}" for src in dated]
+            article["body_md"] = article["body_md"].rstrip() + "\n" + "\n".join(lines) + "\n"
         kb_store.save_wiki_article(
             slug,
             title=article["title"],

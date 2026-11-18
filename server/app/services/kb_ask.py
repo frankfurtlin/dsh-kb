@@ -37,8 +37,14 @@ def answer(question: str, *, limit: int = _MAX_CITATIONS) -> dict:
     if not kb_ai.is_configured():
         return {"ok": False, "error": "AI 未配置：缺少 DSH AI 桥密钥（server/.ai-secret）"}
     kb_store.sync()
-    result = kb_search.search(text, limit=max(1, min(12, limit)), offset=0, mode="auto")
-    items = result["items"][:_MAX_CITATIONS]
+    result = kb_search.search(text, limit=max(_MAX_CITATIONS, 10), offset=0, mode="auto")
+    pool = result["items"]
+    items = pool[:_MAX_CITATIONS]
+    # 综述文章通常比单篇报告更适合回答跨报告问题：池子里有文章时，保底给一篇位置。
+    if not any(item.get("kind") == "article" for item in items):
+        best_article = next((item for item in pool if item.get("kind") == "article"), None)
+        if best_article is not None:
+            items = items[:_MAX_CITATIONS - 1] + [best_article]
     if not items:
         return {
             "ok": True,
@@ -51,6 +57,26 @@ def answer(question: str, *, limit: int = _MAX_CITATIONS) -> dict:
     citations = []
     blocks = []
     for number, item in enumerate(items, 1):
+        if item.get("kind") == "article":
+            article = kb_store.wiki_article_detail(item["slug"]) or {}
+            overview = item.get("summary") or article.get("overview") or ""
+            body = (article.get("body_md") or "").replace("---", " ")
+            citations.append(
+                {
+                    "n": number,
+                    "title": item["title"],
+                    "path": item["path"],
+                    "url": item["url"],
+                    "date": item.get("date") or "",
+                    "category": "LLM Wiki · 文章",
+                    "score": item.get("score") or item.get("semantic_score") or 0,
+                }
+            )
+            blocks.append(
+                f"[{number}] 《{item['title']}》（LLM Wiki 综述，{item.get('source_count', 0)} 篇来源）\n"
+                f"总览：{overview}\n正文节选：{body[:1200]}"
+            )
+            continue
         if item.get("kind") == "node":
             summary = item.get("summary") or ""
             citations.append(

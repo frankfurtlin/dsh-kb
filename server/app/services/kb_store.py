@@ -280,11 +280,12 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
 
 
 def _ensure_wiki_columns(conn: sqlite3.Connection) -> None:
-    """给旧库的 wiki_page 表补齐向量列（幂等）。"""
-    existing = {row["name"] for row in conn.execute("PRAGMA table_info(wiki_page)")}
-    for column, definition in WIKI_EMBED_COLUMNS.items():
-        if column not in existing:
-            conn.execute(f"ALTER TABLE wiki_page ADD COLUMN {column} {definition}")
+    """给旧库的 wiki_page / wiki_article 表补齐向量列（幂等）。"""
+    for table in ("wiki_page", "wiki_article"):
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for column, definition in WIKI_EMBED_COLUMNS.items():
+            if column not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
     conn.commit()
 
 
@@ -1441,6 +1442,7 @@ def hybrid_search(
     semantic_weight: float = 0.62,
     lexical_weight: float = 0.38,
     include_nodes: bool = True,
+    include_articles: bool = True,
     ppr_weight: float = 0.0,
 ) -> tuple[list[dict], int]:
     """语义 + 词法混合检索；返回 (items, total)。
@@ -1457,11 +1459,10 @@ def hybrid_search(
         date_to=date_to,
         view=view,
     )
-    if not rows:
-        return [], 0
     vector = np.asarray(query_vector, dtype=np.float32)
     norm = float(np.linalg.norm(vector)) or 1.0
-    cosine = matrix @ (vector / norm)
+    # 报告向量可能还没补齐（刚重启/新库），但这不影响 wiki 页与文章候选。
+    cosine = matrix @ (vector / norm) if rows else np.zeros(0)
     lowered = keyword.lower()
     scored = []
     for index, row in enumerate(rows):
@@ -1507,6 +1508,16 @@ def hybrid_search(
     if include_nodes and not filtered:
         scored.extend(
             _node_candidates(
+                keyword,
+                query_vector,
+                model=model,
+                semantic_weight=semantic_weight,
+                lexical_weight=lexical_weight,
+            )
+        )
+    if include_articles and not filtered:
+        scored.extend(
+            _article_candidates(
                 keyword,
                 query_vector,
                 model=model,
@@ -1613,6 +1624,118 @@ def _wiki_plain_text(body_md: str) -> str:
     return " ".join(text.split())
 
 
+def article_embed_stats(model: str) -> dict:
+    conn = _connect()
+    try:
+        total = conn.execute("SELECT COUNT(*) FROM wiki_article WHERE state != 'archived'").fetchone()[0]
+        embedded = conn.execute(
+            "SELECT COUNT(*) FROM wiki_article WHERE state != 'archived'"
+            " AND embedding IS NOT NULL AND embed_model = ?",
+            (model,),
+        ).fetchone()[0]
+        return {"total": total, "embedded": embedded, "pending": max(0, total - embedded)}
+    finally:
+        conn.close()
+
+
+def next_pending_article_embedding(limit: int, *, model: str) -> list[dict]:
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT slug, title, kind, overview, body_md FROM wiki_article"
+            " WHERE state != 'archived' AND (embed_model != ? OR embedding IS NULL)"
+            " ORDER BY source_count DESC, slug ASC LIMIT ?",
+            (model, max(1, int(limit))),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def set_article_embedding(slug: str, vector, model: str) -> None:
+    payload = np.asarray(vector, dtype=np.float32).tobytes()
+    conn = _connect()
+    try:
+        conn.execute(
+            "UPDATE wiki_article SET embedding = ?, embed_model = ?, embed_at = ? WHERE slug = ?",
+            (payload, model, _now(), slug),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def article_vectors(*, model: str):
+    """取全部文章向量（按行归一化），返回 (rows, matrix)。"""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT slug, title, kind, subject, overview, body_md, source_count, generated_at, embedding"
+            " FROM wiki_article WHERE state != 'archived' AND embedding IS NOT NULL AND embed_model = ?",
+            (model,),
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return [], np.zeros((0, 0), dtype=np.float32)
+    matrix = np.vstack([np.frombuffer(row["embedding"], dtype=np.float32) for row in rows])
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    return rows, (matrix / norms).astype(np.float32)
+
+
+def _article_candidates(keyword: str, query_vector, *, model: str,
+                        semantic_weight: float, lexical_weight: float) -> list[tuple]:
+    """把 LLM Wiki 文章也当成可检索文档（标题/总览/正文参与词法，向量参与语义）。"""
+    rows, matrix = article_vectors(model=model)
+    if not rows:
+        return []
+    vector = np.asarray(query_vector, dtype=np.float32)
+    norm = float(np.linalg.norm(vector)) or 1.0
+    cosine = matrix @ (vector / norm)
+    lowered = (keyword or "").lower()
+    out = []
+    for index, row in enumerate(rows):
+        plain = _wiki_plain_text(row["body_md"])
+        title = (row["title"] or "").lower()
+        haystack = f"{row['subject']} {row['overview']} {plain}".lower()
+        lexical, match = 0.0, "semantic"
+        if lowered:
+            if lowered in title:
+                lexical, match = 1.0, "title"
+            elif lowered in haystack:
+                lexical, match = 0.55, "body"
+        similarity = max(0.0, float(cosine[index]))
+        if lowered and lexical == 0.0 and similarity < 0.28:
+            continue
+        if not lowered and similarity < 0.15:
+            continue
+        score = semantic_weight * similarity + lexical_weight * lexical
+        if score <= 0.05:
+            continue
+        summary = (row["overview"] or plain)[:280]
+        item = {
+            "kind": "article",
+            "slug": row["slug"],
+            "path": f"article:{row['slug']}",
+            "url": f"wiki/{row['slug']}",
+            "title": row["title"],
+            "entity_type": row["kind"],
+            "category": "LLM Wiki",
+            "series": "文章",
+            "date": (row["generated_at"] or "")[:10],
+            "summary": summary,
+            "summary_ai": summary,
+            "source_count": row["source_count"] or 0,
+            "match": match,
+            "snippet": summary[:160],
+            "score": round(float(score), 4),
+            "semantic_score": round(float(similarity), 4),
+        }
+        out.append((score, similarity, match, item))
+    return out
+
+
 def _node_candidates(keyword: str, query_vector, *, model: str,
                      semantic_weight: float, lexical_weight: float) -> list[tuple]:
     """把 wiki 页当成「一篇只讲一个实体的文档」参与同一套混合打分。"""
@@ -1667,6 +1790,51 @@ def _node_candidates(keyword: str, query_vector, *, model: str,
 # ---------- P11：实体图（共现边 + PPR 第三路召回） ----------
 
 _GRAPH_CACHE: dict = {"at": 0.0, "adj": None, "pages": None}
+
+
+def graph_data(limit: int = 220, *, min_weight: int = 0) -> dict:
+    """图谱画布数据：按提及报告数取前 N 个节点，附节点间共现边与互链边。"""
+    conn = connect()
+    try:
+        rows = conn.execute(
+            "SELECT slug, kind, title, entity_type, report_count FROM wiki_page"
+            " WHERE state = 'live' ORDER BY report_count DESC, slug ASC LIMIT ?",
+            (max(1, int(limit)),),
+        ).fetchall()
+        nodes = [
+            {
+                "slug": row["slug"],
+                "kind": row["kind"],
+                "title": row["title"],
+                "entity_type": row["entity_type"],
+                "report_count": row["report_count"],
+            }
+            for row in rows
+        ]
+        slugs = {node["slug"] for node in nodes}
+        edges: dict[tuple[str, str], int] = {}
+        for row in conn.execute("SELECT source_slug, target_slug, weight FROM entity_edges"):
+            source, target = row["source_slug"], row["target_slug"]
+            if source in slugs and target in slugs and row["weight"] >= min_weight:
+                key = (source, target) if source <= target else (target, source)
+                edges[key] = max(edges.get(key, 0), int(row["weight"]))
+        for row in conn.execute(
+            "SELECT p.slug AS source, l.target_slug AS target FROM wiki_link l"
+            " JOIN wiki_page p ON p.id = l.page_id WHERE p.state = 'live'"
+        ):
+            source, target = row["source"], row["target"]
+            if source in slugs and target in slugs:
+                key = (source, target) if source <= target else (target, source)
+                edges.setdefault(key, 1)
+        total = conn.execute("SELECT COUNT(*) FROM wiki_page WHERE state = 'live'").fetchone()[0]
+        return {
+            "nodes": nodes,
+            "edges": [{"source": a, "target": b, "weight": w} for (a, b), w in edges.items()],
+            "showing": len(nodes),
+            "total_nodes": total,
+        }
+    finally:
+        conn.close()
 
 
 def invalidate_graph_cache() -> None:
@@ -1879,6 +2047,12 @@ def wiki_article_list(kind: str = "", q: str = "", limit: int = 50, offset: int 
         conn.close()
 
 
+def _date_from_path(path: str) -> str:
+    """报告路径以 20260101/... 开头时，退化为从路径取日期（索引未写 date 的兜底）。"""
+    match = re.match(r"^(\d{4})(\d{2})(\d{2})/", str(path or ""))
+    return f"{match.group(1)}-{match.group(2)}-{match.group(3)}" if match else ""
+
+
 def wiki_article_detail(slug: str) -> dict | None:
     conn = connect()
     try:
@@ -1890,14 +2064,42 @@ def wiki_article_detail(slug: str) -> dict | None:
                 "n": item["position"],
                 "path": item["path"],
                 "title": item["title"],
+                "date": item["date"] or _date_from_path(item["path"]),
                 "url": f"reports/{item['path']}",
             }
             for item in conn.execute(
-                "SELECT path, position, title FROM wiki_article_source WHERE article_id = ? ORDER BY position",
+                "SELECT s.path, s.position, s.title, r.date AS date FROM wiki_article_source s"
+                " LEFT JOIN reports r ON r.path = s.path"
+                " WHERE s.article_id = ? ORDER BY s.position",
                 (row["id"],),
             ).fetchall()
         ]
-        return _article_row(row, sources)
+        related = [
+            {
+                "slug": item["slug"],
+                "title": item["title"],
+                "kind": item["kind"],
+                "shared": item["shared"],
+                "url": f"wiki/{item['slug']}",
+            }
+            for item in conn.execute(
+                "SELECT a.slug, a.title, a.kind, COUNT(*) AS shared"
+                " FROM wiki_article_source s1"
+                " JOIN wiki_article_source s2 ON s2.path = s1.path AND s2.article_id != s1.article_id"
+                " JOIN wiki_article a ON a.id = s2.article_id"
+                " WHERE s1.article_id = ?"
+                " GROUP BY a.id ORDER BY shared DESC, a.updated_at DESC LIMIT 6",
+                (row["id"],),
+            ).fetchall()
+        ]
+        timeline = sorted(
+            (s for s in sources if s["date"]),
+            key=lambda item: item["date"],
+        )
+        detail = _article_row(row, sources)
+        detail["related"] = related
+        detail["timeline"] = timeline
+        return detail
     finally:
         conn.close()
 

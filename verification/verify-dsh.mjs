@@ -210,6 +210,26 @@ try {
     `title=${graphTitle} links=${graphLinks}`)
   await page.screenshot({ path: join(OUT, '20-dsh-graph.png'), fullPage: true })
 
+  // P13+：图谱可视化画布
+  if (graphFrame) {
+    await graphFrame.goto(`${new globalThis.URL(URL).origin}/kb/graph/canvas`, { waitUntil: 'domcontentloaded' })
+    await page.waitForTimeout(2200)
+    const canvasEl = await graphFrame.locator('#kb-canvas').count()
+    const canvasPainted = canvasEl
+      ? await graphFrame.evaluate(() => {
+          const el = document.getElementById('kb-canvas')
+          if (!el || !el.width || !el.height) return 0
+          return el.toDataURL('image/png').length
+        })
+      : 0
+    const canvasMeta = canvasEl ? await graphFrame.locator('#kb-meta').innerText() : ''
+    check('图谱画布渲染出节点与边', canvasPainted > 8000 && /个节点/.test(canvasMeta),
+      `canvas=${canvasPainted} meta=${canvasMeta.slice(0, 40)}`)
+    await page.screenshot({ path: join(OUT, '22-dsh-graph-canvas.png'), fullPage: true })
+  } else {
+    check('图谱画布渲染出节点与边', false, '知识图谱 iframe 未找到')
+  }
+
   // P13：进入 LLM Wiki 文章层（uke 层已由后台/CLI 生成，验证卡片与文章页引用）
   if (graphFrame) {
     await graphFrame.goto(`${new globalThis.URL(URL).origin}/kb/`, { waitUntil: 'domcontentloaded' })
@@ -240,6 +260,21 @@ try {
   } else {
     check('iframe 内 LLM Wiki 索引显示文章卡片', false, '知识图谱 iframe 未找到，无法回到面板')
   }
+  // P13+：检索结果里混排 LLM Wiki 文章
+  if (graphFrame) {
+    await graphFrame.goto(`${new globalThis.URL(URL).origin}/kb/`, { waitUntil: 'domcontentloaded' })
+    await graphFrame.waitForSelector('#kb-search', { timeout: 15000 })
+    await graphFrame.fill('#kb-search', '资金流向')
+    await page.waitForTimeout(2200)
+    const wikiCards = await graphFrame.locator('.kb-badge-wiki').count()
+    const articleCards = await graphFrame.locator('.kb-item-doc').count()
+    check('搜索混排 LLM Wiki 文章卡片', wikiCards > 0 || articleCards > 0,
+      `wikiBadges=${wikiCards} docCards=${articleCards}`)
+    await page.screenshot({ path: join(OUT, '23-dsh-search-wiki.png'), fullPage: true })
+  } else {
+    check('搜索混排 LLM Wiki 文章卡片', false, '知识图谱 iframe 未找到')
+  }
+
   await page.goto(URL)
   await page.waitForTimeout(600)
 

@@ -47,6 +47,22 @@ def build_pending_nodes(limit: int | None = None) -> dict:
     return {"ok": True, "embedded": len(items), **stats}
 
 
+def build_pending_articles(limit: int | None = None) -> dict:
+    """给 LLM Wiki 文章补向量（让文章也能进混合检索与问答引用）。"""
+    model = config.EMBED_MODEL
+    if not kb_embed.available():
+        return {"ok": False, "embedded": 0}
+    items = kb_store.next_pending_article_embedding(limit or config.EMBED_BATCH, model=model)
+    if not items:
+        return {"ok": True, "embedded": 0, **kb_store.article_embed_stats(model)}
+    vectors = kb_embed.embed_texts([kb_embed.article_document_text(item) for item in items])
+    for item, vector in zip(items, vectors):
+        kb_store.set_article_embedding(item["slug"], vector, model)
+    stats = kb_store.article_embed_stats(model)
+    logger.info("文章向量补齐 %s 篇：%s/%s", len(items), stats["embedded"], stats["total"])
+    return {"ok": True, "embedded": len(items), **stats}
+
+
 def search(
     q: str,
     *,
@@ -80,6 +96,7 @@ def search(
                 semantic_weight=config.HYBRID_WEIGHT_SEMANTIC,
                 lexical_weight=config.HYBRID_WEIGHT_LEXICAL,
                 include_nodes=not any((category, series, date_from, date_to)) and view == "all",
+                include_articles=not any((category, series, date_from, date_to)) and view == "all",
                 ppr_weight=config.HYBRID_WEIGHT_PPR,
             )
             # 向量还没补齐（例如刚重启）时，语义结果可能为空：退回词法。

@@ -167,8 +167,15 @@ SQLite kb.sqlite ── ② 正文摘要 + 全文（≤2 万字）
 - 把某主题/实体相关的最近 12 篇报告综合成一篇中文文章：150–250 字总览、2–5 个带 [n] 引用的
   小节、3–5 条关键结论；页尾列出全部来源报告（[n] 可点击回跳）。侧栏「**LLM Wiki**」入口
   （`/kb/wiki/`）是文章索引，点卡片进文章页，右上「重新生成」可手动重写。
-- **候选**：标签覆盖 ≥ `KB_WIKI_MIN_REPORTS`（默认 3）篇报告的**主题**，以及 AI 实体聚合同样
-  阈值的**实体**；按覆盖篇数倒序，生产库当前有 260+ 个候选。
+- **候选**：标签覆盖 ≥ `KB_WIKI_MIN_REPORTS`（默认 2）篇报告的**主题**，以及 AI 实体聚合同样
+  阈值的**实体**；按覆盖篇数倒序，生产库当前有 400+ 个候选。批量覆盖用
+  `python -m app.cli_wiki --limit 30`（一次生成覆盖最多的 30 个主题）。
+- **参与检索与问答**：文章也有 512 维本地向量（`bge-small-zh-v1.5`，后台自动补齐），
+  进入混合检索的同一排序；搜索框里文章以「LLM Wiki」徽章卡片混排。RAG 问答会在候选池里
+  保底保留一篇最相关文章作为引用，回答关于多个报告的综合问题时优先用综述而不是单篇日报。
+- **互链与时间线**：文章页有「时间线」（按来源报告日期列出演进）与「相关文章」
+  （按共享来源数排序，<6 篇来源重叠的不显示）；`/api/wiki/article/{slug}` 同步返回
+  `timeline` 与 `related` 两个数组。
 - **增量与溯源**：文章记录来源 hash（每篇来源的 `content_hash` 组合），hash 命中直接跳过；
   来源变化后文章标记为「过期」并计入 `/api/wiki/lint`；每篇记录生成模型（当前
   `opencode-go/deepseek-v4.1-flash · dsh-agent`）与生成时间。
@@ -178,6 +185,11 @@ SQLite kb.sqlite ── ② 正文摘要 + 全文（≤2 万字）
   打开；和 `graph/` 一样属于编译产物，不入 git。
 - 写入失败会记 `wiki_article_job`（running/failed/attempts/error），下一轮重试；模型把 token
   全花在推理上时会自动加大预算 + 缩短来源重试一次。
+
+**知识图谱可视化画布（P13+）**
+- `/graph/canvas`（面板入口：知识图谱索引页顶部「打开可视化画布」）：零依赖 canvas 力导向布局，
+  一次绘制前 200 个节点 / 上千条边；滚轮缩放、拖拽平移、输入框实时过滤、点节点看详情与相关节点。
+  数据来自 `GET /api/graph/graph?limit=N&min_weight=`（按提及报告数取前 N 个节点，附带共现边与互链边）。
 
 **工程化对齐（P0 / P1）**
 - **自定义日期区间**：侧栏「时间」下有起止两个 `date` 输入 + 「应用」，与老站的
@@ -287,7 +299,7 @@ graph/                      P10：编译出的节点 markdown（pages/<slug>.md 
   web/static/               style.css / core.js / ui.js / kb.js / icon-192.png
   cli_eval.py               P11：检索评测（lexical / hybrid / hybrid+ppr 三模式）
   wiki/                     P13：编译出的文章 markdown（articles/<slug>.md + index.md，不入库）
-  tests/                    pytest：索引/检索/状态、批量、公开外链与老站迁移、P0/P1、图谱节点/共现边/PPR、LLM Wiki 文章（58 项）
+  tests/                    pytest：索引/检索/状态、批量、公开外链与老站迁移、P0/P1、图谱节点/共现边/PPR、LLM Wiki 文章、文章检索/互链/时间线、图谱画布（61 项）
   ../verification/eval/     P11：评测集 queries.json 与基线 baseline.json
 requirements.txt            后端依赖（fastapi/uvicorn/jinja2/httpx/numpy/fastembed/onnxruntime）
 requirements-dev.txt        开发依赖（pytest）
@@ -387,10 +399,12 @@ host 半默认反代 `127.0.0.1:8816`；如需临时指向其它端口，可设
 | GET | `/api/graph/related/{slug}` | 该节点直接引用的报告 |
 | GET | `/api/graph/stats` | 节点数/引用数/互链数/状态分布 |
 | GET | `/api/graph/lint` | 体检：孤儿节点、断链、过期节点、高频无节点标签 |
+| GET | `/api/graph/graph?limit=&min_weight=` | 画布数据：`{nodes, edges, showing, total_nodes}` |
 | POST | `/api/graph/compile` | body `{force?}`：重建图谱（确定性，hash 命中跳过写盘） |
 | GET | `/graph/`、`/graph/{slug}` | 可直接浏览的图谱索引与节点页（HTML） |
+| GET | `/graph/canvas` | 图谱可视化画布（canvas 力导向，缩放/拖拽/过滤/点节点详情） |
 | GET | `/api/wiki/articles?kind=&q=&limit=&offset=` | LLM Wiki 文章列表（按生成时间倒序，含来源数/模型/过期状态） |
-| GET | `/api/wiki/article/{slug}` | 文章详情：markdown、[n] 来源列表、模型与时间 |
+| GET | `/api/wiki/article/{slug}` | 文章详情：markdown、[n] 来源列表、时间线、相关文章、模型与时间 |
 | GET | `/api/wiki/stats` | 文章数/来源数/过期数/候选数/模型/是否可用 |
 | GET | `/api/wiki/lint` | 体检：过期文章、空来源、来源缺失、候选不可达 |
 | POST | `/api/wiki/compile` | body `{slug?, limit?, force?}`：生成/重写文章（未配置 AI → 503） |
@@ -410,7 +424,7 @@ iframe 内使用 `/kb/` 这一套。
 ```bash
 # 单元/接口测试（自带临时 reports + 临时索引库，不碰生产数据）
 cd /root/workspace/plugins/dsh-kb/server
-../.venv/bin/python -m pytest        # 58 passed
+../.venv/bin/python -m pytest        # 61 passed
 ../.venv/bin/python -m app.cli_eval  # 检索评测（lexical / hybrid / hybrid+ppr）
 
 # 端到端验收
@@ -421,27 +435,29 @@ node verify-proxy.mjs    # host 半（lib/index.js）隔离验收，不需要装
 
 最近一次结果（2026-11-17，图谱/主题页/PPR/评测集上线后）：
 
-- `pytest` **57 passed** —— 索引同步与分类/系列/日期派生、列表筛选（分类/系列/日期区间/
+- `pytest` **61 passed** —— 索引同步与分类/系列/日期派生、列表筛选（分类/系列/日期区间/
   半开区间/分页/排序）、标题与正文检索（snippet/match）、详情 preview、已读/收藏往返、
   非法路径 400、批量读写、筛选态树计数、公开外链（外链生成、匿名 200、内链改写、附件白名单、
   目录页、越权 404、取消公开立即生效、老站公开状态迁移）、P0/P1（指纹缓存、gzip、
   统一错误体、healthz、版本号、X-Process-Time、AI 分类存储与同步回归、图谱节点编译/增量/阈值/API/HTML、共现边与 PPR）。
-- `verify-app.mjs` **101/101 passed** —— 树/列表/检索/前缀反代/重定向；分类、系列、快捷日期
+- `verify-app.mjs` **105/105 passed** —— 树/列表/检索/前缀反代/重定向；分类、系列、快捷日期
   与**自定义日期区间**（含倒置拒绝、筛选条、清除恢复）；健康检查、统一错误体、静态指纹
   长缓存、无指纹短缓存、gzip；标题与正文搜索高亮；排序与分页；详情抽屉（preview、自动已读、
   收藏、打开原文）；AI sidecar 卡片/抽屉；向量与问答接口的降级路径；周报面板（概览/主题/统计）；
   公开开关（公开/取消公开、公开视图、公开外链匿名 200、附件白名单、私有报告 404、越权路径 404）；
   收藏/未读视图；筛选态分类计数收敛；批量选择与批量收藏；搜索历史；
   保存/套用/删除筛选；AI 分类（进度接口、写入生效、分类来源字段、classify 事件）；
-  LLM Wiki（文章集/统计/compile 未配置 503/索引页/404/独立入口）；移动端；无 JS 报错。
+  LLM Wiki（文章集/统计/compile 未配置 503/索引页/404/独立入口）；文章详情时间线/相关文章；
+  图谱画布数据接口与画布页；移动端；无 JS 报错。
 - `verify-proxy.mjs` **11/11 passed** —— 导出与注册、`/kb/`、`/kb/api/kb`、`/kb/static/*`、
   AI 桥鉴权（无密钥/错密钥都按 404 隐藏）
   反代、`/kb?x=1 → 302 /kb/?x=1`、401/403 鉴权闸门、上游未启动时 502 中文提示。
-- `verify-dsh.mjs` **21/21 passed**（真实 DSH 面板内；公开开关是状态自适应，初始已公开时会多 1 项）—— 匿名 401、侧栏「知识库」行、
+- `verify-dsh.mjs` **23/23 passed**（真实 DSH 面板内；公开开关是状态自适应，初始已公开时会多 1 项）—— 匿名 401、侧栏「知识库」行、
   iframe `/kb/`、首屏卡片/计数/分类、搜索高亮、分类筛选、详情抽屉与自动已读、公开开关
   （抽屉按钮 / 复制链接按钮出现与消失，状态自适应）、AI 问答（真实调模型，答案 + 引用）、
   周报面板、**知识图谱索引**（284 节点 / 3109 引用 / 1459 互链）、**LLM Wiki 文章**（卡片 → 文章页，
-  62 个 [n] 引用跳转）、无插件相关 console error。
+  文章页引用跳转）、**图谱可视化画布**（200 节点 / 1121 条边，canvas 已绘制）、
+  **搜索混排 LLM Wiki 文章卡片**、无插件相关 console error。
 
 AI 问答与周报要调模型（单次 20–40s），host 半对 `/kb/api/kb/ask`、`/kb/api/kb/digest`
 单独放宽到 180s，其余接口仍 10s 超时。
@@ -469,6 +485,9 @@ AI 问答与周报要调模型（单次 20–40s），host 半对 `/kb/api/kb/as
 | `19-drawer-meta-prod.png` | 生产页：抽屉元数据行（入库时间 / 路径） |
 | `20-dsh-graph.png` | 真实 DSH 面板内的知识图谱索引（284 节点 / 3109 引用 / 1459 互链，`verify-dsh.mjs`） |
 | `21-dsh-wiki-article.png` | 真实 DSH 面板内的 LLM Wiki 文章页（带 [n] 引用与来源列表，`verify-dsh.mjs`） |
+| `22-graph-canvas.png` | 图谱可视化画布（140 节点 / 831 条边，两块主题簇：Minecraft 与 A 股） |
+| `23-dsh-search-wiki.png` | DSH 面板内搜索「资金流向」混排 LLM Wiki 文章与图谱节点卡片 |
+| `24-search-mixed.png` | 同一搜索的独立页面版（侧栏计数与结果数一致，未读/收藏显示为「—」） |
 
 语法门：`node --check lib/index.js && node --check client.js && node --check verification/verify-app.mjs && node --check verification/verify-proxy.mjs`；
 Python 用 `/usr/bin/python3.11 -m py_compile $(find server -name '*.py')`。

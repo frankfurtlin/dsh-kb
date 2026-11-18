@@ -108,6 +108,15 @@ def node_document_text(page: dict) -> str:
                                        body[: config.EMBED_BODY_LIMIT]] if part)
 
 
+def article_document_text(article: dict) -> str:
+    """LLM Wiki 文章送入模型的文本：标题 + 总览 + 正文（markdown 去标记后截断）。"""
+    body = str(article.get("body_md") or "")
+    body = body.split("---", 2)[-1] if body.startswith("---") else body
+    body = body.replace("#", " ").replace("|", " ").replace("[[", " ").replace("]]", " ")
+    head = " ".join(part for part in [article.get("title") or "", article.get("overview") or ""] if part)
+    return (head + "\n" + body)[: config.EMBED_BODY_LIMIT]
+
+
 def document_text(item: dict) -> str:
     """送入模型的文档文本：标题 + 摘要 + 标签 + 正文前若干字。"""
     summary = item.get("summary_ai") or item.get("summary") or ""

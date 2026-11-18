@@ -246,8 +246,20 @@ def wiki_article_html(slug: str, request: Request):
         f'{generated} {state}</div>'
         f'<div class="actions"><button onclick="gen(\'{html_lib.escape(article["slug"])}\', this)">重新生成</button></div>'
     )
+    related = "".join(
+        f'<li><a href="{prefix}/{html_lib.escape(item["url"])}">{html_lib.escape(item["title"])}</a>'
+        f' <span style="opacity:.7">（共享 {item["shared"]} 篇来源）</span></li>'
+        for item in article.get("related") or []
+    )
+    related_block = f'<div class="sources"><h2>相关文章</h2><ol style="padding-left:20px">{related}</ol></div>' if related else ""
+    timeline = "".join(
+        f'<li><span style="opacity:.7">{html_lib.escape(src["date"])}</span> · '
+        f'<a href="{prefix}/{html_lib.escape(src["url"])}">{html_lib.escape(src["title"])}</a></li>'
+        for src in article.get("timeline") or []
+    )
+    timeline_block = f'<div class="sources"><h2>时间线</h2><ol style="padding-left:20px">{timeline}</ol></div>' if timeline else ""
     footer = f'<div class="sources"><h2>来源</h2><ol style="padding-left:20px">{sources}</ol></div>'
     prefix_js = f"<script>window.__KB_PREFIX__={prefix!r};</script>"
     return HTMLResponse(
-        _shell(article["title"], prefix_js + header + body + footer + _GEN_JS, prefix)
+        _shell(article["title"], prefix_js + header + body + timeline_block + related_block + footer + _GEN_JS, prefix)
     )

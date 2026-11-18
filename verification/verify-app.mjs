@@ -124,6 +124,24 @@ async function seedAi(reportPath, payload) {
   })
 }
 
+async function seedArticles(entries) {
+  const env = { ...process.env, KB_DATA_DIR: DATA_DIR }
+  const lines = ['from app.services import kb_store']
+  for (const entry of entries) {
+    lines.push(`kb_store.save_wiki_article(${JSON.stringify(entry.slug)}, title=${JSON.stringify(entry.title)}, kind="topic", subject=${JSON.stringify(entry.title)}, overview=${JSON.stringify(entry.overview || '')}, body_md=${JSON.stringify(entry.body || '')}, source_hash=${JSON.stringify('h-' + entry.slug)}, sources=${JSON.stringify(entry.sources || [])}, model="verify-app", takeaways=1)`)
+  }
+  lines.push('print("seeded")')
+  return new Promise((resolvePromise) => {
+    const child = spawn(PYTHON, ['-c', lines.join('\n')], { cwd: SERVER_DIR, env })
+    let output = ''
+    child.stdout.on('data', (chunk) => { output += chunk.toString() })
+    child.stderr.on('data', (chunk) => { output += chunk.toString() })
+    seedLog = output
+    child.on('exit', (codeValue) => resolvePromise(codeValue === 0 && output.includes('seeded')))
+    child.on('error', () => resolvePromise(false))
+  })
+}
+
 async function seedClassify(reportPath, payload) {
   const env = { ...process.env, KB_DATA_DIR: DATA_DIR }
   const code = [
@@ -149,7 +167,7 @@ async function main() {
   DATA_DIR = mkdtempSync(join(tmpdir(), 'dsh-kb-verify-'))
   const child = spawn(PYTHON, ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(PORT), '--log-level', 'warning'], {
     cwd: SERVER_DIR,
-    env: { ...process.env, KB_DATA_DIR: DATA_DIR, KB_EMBED_ENABLED: '0', KB_AI_SECRET_FILE: join(DATA_DIR, 'no-ai-bridge-secret') },
+    env: { ...process.env, KB_DATA_DIR: DATA_DIR, KB_EMBED_ENABLED: '0', KB_AI_SECRET_FILE: join(DATA_DIR, 'no-ai-bridge-secret'), KB_GRAPH_MIN_REPORTS: '1', KB_WIKI_MIN_REPORTS: '2' },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   let serverLog = ''
@@ -615,6 +633,36 @@ async function main() {
     await page.waitForTimeout(700)
     check('移动端：搜索可用', (await page.locator('.kb-item').count()) > 0)
     await shot(page, '06-mobile.png', true)
+
+    // P13+：文章时间线/相关文章 + 图谱画布
+    const seededArticles = await seedArticles([
+      { slug: 'topic-verify-a', title: '校验主题 A', overview: '主题 A 的总览', body: '# 校验主题 A\n\n总览 A\n\n## 小节\n\n正文 [1]\n',
+        sources: [
+          { path: '20260101/a-share-report.html', title: 'A股市场全景分析报告', date: '2026-01-01' },
+          { path: '20260115/xhs-note.html', title: '小红书爆款笔记精读', date: '2026-01-15' },
+        ] },
+      { slug: 'topic-verify-b', title: '校验主题 B', overview: '主题 B 的总览', body: '# 校验主题 B\n\n总览 B\n\n## 小节\n\n正文 [1]\n',
+        sources: [
+          { path: '20260101/a-share-report.html', title: 'A股市场全景分析报告', date: '2026-01-01' },
+          { path: '20260115/xhs-note.html', title: '小红书爆款笔记精读', date: '2026-01-15' },
+        ] },
+    ])
+    check('种子文章写入索引', seededArticles, seedLog.slice(0, 160))
+    const detail = await (await fetch(ORIGIN + '/api/wiki/article/topic-verify-a')).json().catch(() => ({}))
+    check('文章详情返回时间线与相关文章',
+      (detail.timeline || []).length >= 2 && (detail.related || []).length >= 1,
+      `timeline=${(detail.timeline || []).length} related=${(detail.related || []).length}`)
+    await fetch(ORIGIN + '/api/graph/compile?force=1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"force":true}' })
+    const graphPayload = await (await fetch(ORIGIN + '/api/graph/graph?limit=50')).json().catch(() => ({}))
+    check('图谱画布数据接口返回节点与边',
+      (graphPayload.nodes || []).length >= 1 && Array.isArray(graphPayload.edges),
+      `nodes=${(graphPayload.nodes || []).length} edges=${(graphPayload.edges || []).length}`)
+    const canvasResponse = await page.goto(ORIGIN + '/graph/canvas', { waitUntil: 'load' })
+    const canvasCount = await page.locator('#kb-canvas').count()
+    check('图谱画布页可打开', canvasResponse.status() === 200 && canvasCount === 1,
+      `status=${canvasResponse.status()} canvas=${canvasCount}`)
+    await page.screenshot({ path: join(OUT, '22-graph-canvas.png'), fullPage: false })
+    await page.goto(ORIGIN + '/', { waitUntil: 'load' })
 
     check('主页面无 JS 报错 / console error', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '))
   } catch (error) {
