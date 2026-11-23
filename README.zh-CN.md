@@ -4,11 +4,8 @@
 
 **把 `reports/` 里的 HTML 报告变成可浏览、可检索、可问答的本地知识库，DSH 侧栏点开即用。**
 
-A local knowledge base for your HTML reports — browsable, searchable and askable from a DSH sidebar panel.
-
 [![Version](https://img.shields.io/badge/version-0.13.0-blue)](package.json)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Platform](https://img.shields.io/badge/DSH-DeepSeek%20Harness-5b5ef7)](https://github.com/frankfurtlin/dsh-pocket)
 
 [English](README.md) · **简体中文**
 
