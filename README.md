@@ -31,7 +31,7 @@ kb_ask(question: "这周资金流向有什么变化？")
   引用：[1] 11-18 收评 · [2] 11-16 收评
 ```
 
-The output above is abridged. The real answer streams citations first, then tokens, and each `[n]` links back to the report it came from. The same data is in the sidebar panel: search box, category and series navigation, tag filters, a detail drawer with the AI summary and a button to open the original.
+The output above is abridged. Search returned the two wrap-ups plus a graph node, and the answer says money rotated into banks and insurers, citing both reports. The real answer streams citations first, then tokens, and each `[n]` links back to the report it came from. The same data is in the sidebar panel: search box, category and series navigation, tag filters, a detail drawer with the AI summary and a button to open the original.
 
 ## How it works
 
