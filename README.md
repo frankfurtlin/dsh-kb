@@ -1,4 +1,48 @@
+<div align="center">
+
 # dsh-kb 「知识库」
+
+**把 `reports/` 里的 HTML 报告变成可浏览、可检索、可问答的本地知识库，DSH 侧栏点开即用。**
+
+A local knowledge base for your HTML reports — browsable, searchable and askable from a DSH sidebar panel.
+
+[![Version](https://img.shields.io/badge/version-0.13.0-blue)](package.json)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Platform](https://img.shields.io/badge/DSH-DeepSeek%20Harness-5b5ef7)](https://github.com/frankfurtlin/dsh-pocket)
+
+[中文](README.md) · [English](README.en.md)
+
+</div>
+
+![知识库主面板：左侧导航、报告卡片与搜索](docs/review-shots/01-home.png)
+
+## 这是什么
+
+dsh-kb 是 DSH 的知识库插件：侧栏常驻「知识库」一行，主面板内嵌 FastAPI 页面，宿主把 `/kb/*` 反代到本机 8816 并复用 DSH 登录鉴权。`reports/` 只读、是唯一事实源；插件唯一的写入口是自己的 SQLite 索引（摘要、已读/收藏、公开标记、AI 产物、向量）。AI 摘要、分类与问答都走 DSH 默认模型，插件不持有模型密钥。
+
+## 功能
+
+- **浏览与检索**：视图 / 分类 / 系列 / 时间 / 标签导航，词法 + 本地 bge-small-zh 向量混合检索（0.62 / 0.38），三种模式可切。
+- **AI 增强**：每篇报告抽摘要、要点、实体、标签，后台增量补全，不另外维护模型 key。
+- **问答与周报**：RAG 问答带 `[n]` 引用，支持 SSE 流式；最近 7 天的主题周报。
+- **知识图谱**：实体/主题节点 + 共现边 + PPR 第三路召回，带可视化画布。
+- **LLM Wiki**：按高频主题生成带引用的长文，参与检索与问答。
+- **公开外链**：单篇标记公开后，匿名只读 `/kb-public/...`，不需要 DSH 账号。
+- **剪藏**：微信 / 小红书 / 知乎 / 普通网页链接粘贴入库（v0.13）。
+- **DSH 工具**：`kb_search` / `kb_get` / `kb_ask`，agent 在对话里直接检索与提问。
+
+## 安装
+
+```bash
+# 后端（独立 systemd 服务、插件内 venv；完整单元见「安装」章节）
+cd /root/workspace/plugins/dsh-kb/server
+../.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8816
+
+# DSH 侧挂载：plugin_manager action=install_bundle target=/root/workspace/plugins/dsh-kb
+```
+
+## 详细文档
+
 
 把 betterlife 老站的**报告库**拆成独立 DSH 插件：侧栏常驻行「知识库」（`order: 15`，
 排在「Automation tasks」之后），主面板内嵌同源 iframe。宿主半把 `/kb/*` 反代到本机
@@ -113,8 +157,8 @@ SQLite kb.sqlite ── ② 正文摘要 + 全文（≤2 万字）
 - **P1 sidecar**：每篇报告由 **DSH 自己的模型**（`dsh-agent` 默认模型，经宿主
   `lib/ai-bridge.js` 的内部 AI 桥）抽取 `summary_ai / key_points / entities / tags`，写回
   索引库；后端不持有任何模型 API key。卡片优先显示 AI 摘要，抽屉显示
-  要点/标签/实体，缺 AI 的卡片有「生成 AI 摘要」按钮。后台线程分批补全（默认 3 篇/30s，
-  并发 1，模型限流时自动退避），也可用 CLI 批量跑。
+  要点/标签/实体，缺 AI 的卡片有「生成 AI 摘要」按钮。后台线程分批补全（默认 3 篇 / 120s，
+  并发 2，模型限流时自动退避），也可用 CLI 批量跑。
 - **P2 语义检索**：本地 `fastembed` + `BAAI/bge-small-zh-v1.5`（512 维，模型在
   `server/data/models`，不依赖在线 embedding）给每篇建向量；搜索默认混合排序
   `0.62·余弦 + 0.38·词法`，工具栏可切「AI 语义 / 关键词」，模型缺席时自动降级关键词。
@@ -340,7 +384,6 @@ server/app/
   main.py                   FastAPI 组合根（同一批路由挂在 / 与 /kb 两套前缀下）
   config.py                 路径与 AI/向量配置（KB_* / AI_* / EMBED_*）
   data/                     kb.sqlite（索引+向量+状态）、models/（bge-small-zh-v1.5）、digest.json
-graph/                      P10：编译出的节点 markdown（pages/<slug>.md + index/log/SCHEMA）
   services/kb_index.py      报告扫描、分类/系列派生、标题/日期提取、筛选（60s 缓存）
   services/kb_store.py      SQLite 索引：同步、摘要/正文抽取、搜索、已读/收藏
   services/report_html.py   HTML 内链改写（/mine/* → /kb/*，根绝对路径按真实文件重写）
@@ -367,9 +410,10 @@ graph/                      P10：编译出的节点 markdown（pages/<slug>.md 
   web/templates/index.html  知识库页面（左导航 + 列表 + 抽屉）
   web/static/               style.css / core.js / ui.js / kb.js / icon-192.png
   cli_eval.py               P11：检索评测（lexical / hybrid / hybrid+ppr 三模式）
-  wiki/                     P13：编译出的文章 markdown（articles/<slug>.md + index.md，不入库）
-  tests/                    pytest：索引/检索/状态、批量、公开外链与老站迁移、P0/P1、图谱节点/共现边/PPR、LLM Wiki 文章、文章检索/互链/时间线、图谱画布（61 项）
+wiki/                       P13：编译出的文章 markdown（articles/<slug>.md + index.md，不入库）
+  tests/                    pytest：索引/检索/状态、批量、公开外链与老站迁移、P0/P1、图谱节点/共现边/PPR、LLM Wiki 文章、文章检索/互链/时间线、图谱画布（72 项）
   ../verification/eval/     P11：评测集 queries.json 与基线 baseline.json
+graph/                      P10：编译出的节点 markdown（pages/<slug>.md + index/log/SCHEMA）
 requirements.txt            后端依赖（fastapi/uvicorn/jinja2/httpx/numpy/fastembed/onnxruntime）
 requirements-dev.txt        开发依赖（pytest）
 pytest.ini                  pytest 配置（testpaths=tests）
@@ -379,7 +423,7 @@ verification/verify-dsh.mjs   真实 DSH 面板内验收（Playwright + launch t
 verification/shots/           验收截图
 ```
 
-## 安装 / 启动（Lead 执行）
+## 安装 / 启动
 
 后端是独立 systemd 服务，用**插件内的 venv** `.venv`（系统 python3.11 + fastembed/onnxruntime；
 为避免沙箱写权限问题，embeddings 的模型与 HF 缓存都放 `server/data/` 下）。密钥只进
@@ -392,7 +436,7 @@ After=network.target
 
 [Service]
 WorkingDirectory=/root/workspace/plugins/dsh-kb/server
-Environment=KB_REPORTS_DIR=/root/workspace/betterlife/reports
+Environment=KB_REPORTS_DIR=/root/workspace/kb-data/reports
 Environment=KB_DATA_DIR=/root/workspace/plugins/dsh-kb/server/data
 EnvironmentFile=-/root/workspace/plugins/dsh-kb/server/.env.local
 ExecStart=/root/workspace/plugins/dsh-kb/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8816
@@ -417,7 +461,7 @@ host 半默认反代 `127.0.0.1:8816`；如需临时指向其它端口，可设
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `KB_REPORTS_DIR` | `/root/workspace/betterlife/reports` | 报告根目录（只读） |
+| `KB_REPORTS_DIR` | `/root/workspace/kb-data/reports` | 报告根目录（只读） |
 | `KB_DATA_DIR` | `server/data` | 索引库目录；`kb.sqlite` / `digest.json` / `models/` 都在这里 |
 | `KB_AI_URL` | `http://127.0.0.1:3080/kb/_internal/ai` | host 插件的内部 AI 桥（调 DSH 默认模型） |
 | `KB_AI_SECRET_FILE` | `server/.ai-secret` | 桥共享密钥（host 半首次加载自动生成，0600；缺失时 AI 优雅关闭） |
@@ -429,7 +473,7 @@ host 半默认反代 `127.0.0.1:8816`；如需临时指向其它端口，可设
 | `KB_EMBED_ENABLED` | `1` | 是否启用本地向量检索 |
 | `KB_EMBED_MODEL` | `BAAI/bge-small-zh-v1.5` | fastembed 模型名 |
 | `KB_EMBED_MODEL_DIR` / `KB_EMBED_HF_HOME` | `server/data/models` / `server/data/hf-cache` | 模型与 HF 缓存目录 |
-| `KB_HYBRID_WEIGHT_SEMANTIC` / `KB_HYBRID_WEIGHT_LEXICAL` | `0.62` / `0.38` | 混合检索权重 |
+| `KB_HYBRID_SEMANTIC` / `KB_HYBRID_LEXICAL` | `0.62` / `0.38` | 混合检索权重 |
 | `KB_PUBLIC_BASE_URL` | `https://hermes.frankfurtlin.top/kb-public` | 公开外链前缀（与 Caddy 路由一致；改域名时同步改） |
 | `KB_GRAPH_DIR` | `<插件根>/graph` | P10：节点 markdown 输出目录（可指向 Obsidian vault 子目录） |
 | `KB_GRAPH_AUTO` | `1` | 同步后是否自动增量编译图谱 |
@@ -447,6 +491,7 @@ host 半默认反代 `127.0.0.1:8816`；如需临时指向其它端口，可设
 | GET | `/api/kb/tree` | 导航树：`{total, unread, starred, public, categories, series, dates, tags, scan_total}`；接受 `q/category/date_from/date_to/view/tag`，计数随筛选收敛；`tags` 为全局 top 15 标签 |
 | GET | `/api/kb/search?q=` | 与列表相同的检索，返回 `{q, items, total}` |
 | GET | `/api/kb/search?q=&mode=` | 混合检索：`mode=auto|hybrid|lexical`；返回 `{q, items, total, mode}`，item 带 `score/semantic_score/match/snippet` |
+| POST | `/api/kb/clip` | body `{text}`：剪藏 —— 从任意粘贴文本里抽 URL，按平台抓正文入库；返回 `{ok, imported, failed, items[{url,site,platform,ok,title,author,error,path,chars}]}` |
 | GET | `/api/kb/report/{path:path}` | 单篇 `{item}`（含 `preview` 前 1200 字、AI 摘要/要点/标签/实体）；不存在 404 |
 | GET | `/api/kb/tags?q=&limit=` | 标签列表：`{tags:[{name, reports, updated_at}]}`（按报告数倒序） |
 | GET | `/api/kb/events?path=&limit=` | 变更轨迹：`{events:[{id,path,kind,payload,model,at}]}`，kind=`ai_enrich|classify|classify_error|state|public|ai_error` |
@@ -484,6 +529,33 @@ host 半默认反代 `127.0.0.1:8816`；如需临时指向其它端口，可设
 上述路径同时挂在 `/kb/*` 下（如 `/kb/`、`/kb/api/kb`、`/kb/reports/...`、`/kb/static/...`），
 因为 host 半按 ziwei 的惯例**原样转发** `req.url`（不剥前缀）。直连 8916 时两套路径都可用，
 iframe 内使用 `/kb/` 这一套。
+
+## 剪藏（v0.13，2026-11-19）
+
+工具栏的「剪藏」按钮打开一个输入框：把微信/小红书/知乎/普通网页的链接连同周围的废话一起贴进去，
+点「提取到知识库」就会抓正文、转成自包含 HTML、落到 `reports/YYYYMMDD/clip-<slug>-<sha1前6>.html`，
+然后立刻出现在列表里（分类「剪藏」）。报告顶部写清**出处**：来源链接、站点、平台、抓取时间。
+
+| 平台 | 抓取方式 | 依赖 |
+| --- | --- | --- |
+| 微信公众号 | 调 Hermes 技能的 `fetch_wechat.sh`（curl + MicroMessenger UA，正文 `#js_content`） | 无需登录；偶发验证墙会自动重试一次 |
+| 小红书 | 调 `fetch_xhs.sh` 下图文 + `ocr_xhs.sh` 只 OCR 首图 | 需要 tesseract（chi_sim+eng） |
+| 知乎 | 需要 `ZHIHU_COOKIE`（含 z_c0）；未配置时返回中文提示 | 匿名请求会被 `zh-zse-ck` 挑战 |
+| 其他网页 | trafilatura 正文抽取 | `pip install trafilatura`（已装进本项目 venv） |
+
+实现注意：
+
+- 抓取脚本用固定临时路径（`/tmp/wx_article.html`、`/root/zh_pick/`、`/tmp/dsh-res/xhs_*`），
+  所以 `kb_clip.py` 用模块级锁串行执行，避免并发互相覆盖。
+- 一次最多贴 5 条链接（`MAX_URLS`），单次请求整体 120s 上限；失败的条目单独返回原因，不影响其它条目。
+- 重复剪同一个链接会覆盖旧文件（按 URL 的 sha1 前 6 位匹配），不会堆重复。
+
+### 分类标记优先于 AI（2026-11-19 修）
+
+报告 HTML 里写 `<!-- bl:category: X -->` 就是「文件自己说了算」。扫描时会把这类文件标成
+`category_pinned=1`，AI 分类器跳过它们（`next_pending_classify` 带 `category_pinned = 0`），
+否则 AI 会把剪藏/博客改回「话题精读」。标记扫描窗口从 8KB 提到 64KB，因为模板生成的长 CSS
+会把标记顶到很远处。
 
 ## 验收
 
@@ -658,7 +730,7 @@ weight=0.15 相对 hybrid MRR +26%，Recall 不掉；再高会开始伤害（Alp
 两者共用同一批 AI 侧车数据，但产物与更新节奏不同：图谱是确定性编译（不调模型，启动即重建），
 Wiki 是模型生成内容（要溯源、要增量、会过期）。
 
-**候选**：标签覆盖 ≥ `KB_WIKI_MIN_REPORTS`（默认 3）篇报告的主题（`topic-<slug>`），以及 AI
+**候选**：标签覆盖 ≥ `KB_WIKI_MIN_REPORTS`（默认 2）篇报告的主题（`topic-<slug>`），以及 AI
 实体聚合同样阈值的实体（`entity-<slug>`）；按覆盖篇数倒序。生产库当前 474 篇报告 →
 260+ 个候选，已生成 1 篇（`topic-资金流向`）。
 
@@ -788,9 +860,9 @@ handle /kb-public/* {
 - **分类已由 AI 主导**（v0.4 起）：规则只作兜底基线，AI 可改一级分类与二级系列，抽屉里能看到
   「AI 分类 / 规则分类」来源；批量重跑走 `/api/kb/classify` 或 `cli_classify.py`。
 - **标签已可筛选**（v0.3 起左导航「标签 AI 生成」），但还没有标签页/同义合并/人工增删标签（R2 剩余）。
-- **没有可视化画布**：图谱以索引页 + 节点页 + 邻域/相关报告 API 呈现，暂无力导向图；R3+。
-- **LLM Wiki 只覆盖高频主题/实体**：阈值 3 篇起、每篇最多 12 篇来源；低频主题没有文章，且文章
-  不参与检索排序（检索仍以报告/图谱节点为单位），「文章之间互链」也还没有（R4 余项）。
+- **画布偏静态**：`/graph/canvas` 已上线（力导向布局 + 邻域查询），但不支持编辑与固定节点位置。
+- **LLM Wiki 只覆盖高频主题/实体**：阈值 2 篇起、每篇最多 12 篇来源；低频主题没有文章。
+  文章已参与混合检索并带时间线与相关文章，但排序权重仍以报告/图谱节点为主。
 - **检索评测集仍偏小**：现有 16 条 query（`verification/eval/queries.json`）覆盖主要场景，但不足以支撑每次改动的统计显著性，扩充与自动回归是 R5。
 - 报告正文里的站外链接、`/login.html` 等不存在的目标保持原样，点击可能在 iframe 内 404
   或跳出 DSH 路由；这是报告自身内容，插件不做兜底。
