@@ -9,9 +9,9 @@
   失败不阻塞投喂，由 `blob` 表的 mirrored/error 字段记录，后台重试。
 - **加密**：AES-256-GCM，随机 12 字节 nonce，AAD 绑定 sha（防调包）。
   文件格式 `KBENC1 | nonce(12) | ciphertext+tag`。
-- **密钥**：`KB_BLOB_KEY_FILE`（默认 `/root/.secrets/kb-blob.key`）里存 32 字节
+- **密钥**：`KB_BLOB_KEY_FILE`（默认 `~/.secrets/kb-blob.key`）里存 32 字节
   随机密钥的 base64；文件不存在时自动生成并 chmod 600。**密钥不进 COS、不进仓库。**
-- **COS**：从 `/root/.secrets/cos.env` 读 `COS_SECRET_ID/COS_SECRET_KEY/COS_REGION/COS_BUCKET`，
+- **COS**：从 `~/.secrets/cos.env` 读 `COS_SECRET_ID/COS_SECRET_KEY/COS_REGION/COS_BUCKET`，
   key 前缀默认 `kb-private/blobs/`。桶是公开读的，所以落进去的内容**必须**是密文；
   没有密钥的人拿到对象也解不开。
 """
@@ -35,8 +35,10 @@ BLOB_DIR = Path(
     os.environ.get("KB_BLOB_DIR")
     or (Path(__file__).resolve().parents[2] / "data" / "blobs")
 )
-KEY_FILE = Path(os.environ.get("KB_BLOB_KEY_FILE", "/root/.secrets/kb-blob.key"))
-COS_ENV = Path(os.environ.get("KB_COS_ENV", "/root/.secrets/cos.env"))
+# 密钥 / COS 凭据默认放在家目录的 .secrets 下：路径运行时推导，两个环境变量可覆盖。
+_SECRETS_DIR = Path.home() / ".secrets"
+KEY_FILE = Path(os.environ.get("KB_BLOB_KEY_FILE", str(_SECRETS_DIR / "kb-blob.key")))
+COS_ENV = Path(os.environ.get("KB_COS_ENV", str(_SECRETS_DIR / "cos.env")))
 COS_PREFIX = os.environ.get("KB_COS_PREFIX", "kb-private/blobs").strip("/")
 
 #: 超过这个大小的文件主存 COS（本地不留原件）。

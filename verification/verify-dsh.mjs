@@ -10,17 +10,40 @@
  *   node verification/verify-dsh.mjs --url "http://127.0.0.1:3080/?$TOKEN"
  */
 import { createRequire } from 'node:module'
+import { existsSync, readdirSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const require = createRequire('/root/workspace/hermes-site/tools/node_modules/')
+// playwright 装在兄弟仓库 hermes-site/tools 下（本仓库不带 node_modules）：
+// 路径运行时推导，可用 DSH_KB_PLAYWRIGHT_MODULES 覆盖。
+const HERMES_TOOLS =
+  process.env.DSH_KB_PLAYWRIGHT_MODULES ||
+  join(homedir(), 'workspace', 'hermes-site', 'tools', 'node_modules')
+const require = createRequire(HERMES_TOOLS + '/')
 const { chromium } = require('playwright')
 
 // Playwright 与浏览器 revision 可能失配（hermes-site/tools 会升级）：优先用环境变量，
-// 否则在默认缺失时回退到本机已有的 headless shell。
-const FALLBACK_CHROME =
-  '/root/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell'
+// 否则在默认缺失时回退到浏览器缓存里最新的 headless shell。
+function findCachedHeadlessShell() {
+  const cacheRoot = process.env.PLAYWRIGHT_BROWSERS_PATH || join(homedir(), '.cache', 'ms-playwright')
+  let names
+  try {
+    names = readdirSync(cacheRoot)
+  } catch {
+    return ''
+  }
+  const revisions = names
+    .filter((name) => /^chromium_headless_shell-\d+$/.test(name))
+    .sort((a, b) => Number(b.split('-').pop()) - Number(a.split('-').pop()))
+  for (const name of revisions) {
+    const executable = join(cacheRoot, name, 'chrome-headless-shell-linux64', 'chrome-headless-shell')
+    if (existsSync(executable)) return executable
+  }
+  return ''
+}
+const FALLBACK_CHROME = findCachedHeadlessShell()
 
 async function launchBrowser() {
   const options = { headless: true, args: ['--no-sandbox'] }
@@ -29,7 +52,11 @@ async function launchBrowser() {
     return await chromium.launch(options)
   } catch (error) {
     if (!String(error).includes('Executable doesn\'t exist')) throw error
-    console.warn('[playwright] 默认浏览器缺失，回退到 chromium 1243：' + FALLBACK_CHROME)
+    if (!FALLBACK_CHROME) {
+      console.error('[playwright] 默认浏览器缺失，浏览器缓存里也没有可用的 headless shell；用 KB_CHROMIUM 指定可执行文件')
+      throw error
+    }
+    console.warn('[playwright] 默认浏览器缺失，回退到缓存里的 headless shell：' + FALLBACK_CHROME)
     return chromium.launch({ ...options, executablePath: FALLBACK_CHROME })
   }
 }

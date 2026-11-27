@@ -4,7 +4,7 @@
 - 入口只有「粘贴一段文本」；服务端自己从文本里抽 URL（最多 MAX_URLS 条），不要求用户
   先把链接单独挑出来。
 - 分平台走已验证的现成脚本（Hermes 的 social-post-to-html 技能），通用网页用 trafilatura。
-- 抓取脚本里有固定临时路径（/tmp/wx_article.html、/root/zh_pick/），所以整个抓取流程
+- 抓取脚本里有固定临时路径（/tmp/wx_article.html、~/zh_pick/），所以整个抓取流程
   串行执行（模块级锁），不做并发。
 - 产出一篇自包含 HTML 直接投喂进索引库（2026-11-25 起不落 reports/）。文档以
   `source_url` 作为唯一键：同一条链接再剪藏 = 更新正文与 blob，不产生副本。
@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import html as html_lib
+import os
 import re
 import shutil
 import subprocess
@@ -27,7 +28,12 @@ from typing import Any
 
 from app.services import kb_blob, kb_store
 
-SKILL_SCRIPTS = Path("/root/.hermes/skills/social-media/social-post-to-html/scripts")
+# 抓取脚本来自 Hermes 的 social-post-to-html 技能：默认在家目录下，可用环境变量覆盖。
+HERMES_HOME = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
+SKILL_SCRIPTS = Path(
+    os.environ.get("KB_SKILL_SCRIPTS")
+    or (HERMES_HOME / "skills" / "social-media" / "social-post-to-html" / "scripts")
+)
 CATEGORY = "剪藏"
 MAX_URLS = 5
 XHS_MAX_IMAGES = 4
@@ -175,7 +181,8 @@ def _fetch_zhihu(url: str, work: Path) -> dict[str, Any]:
     if not script.exists():
         return {"ok": False, "error": "缺 fetch_zhihu.sh"}
     code, out, err = _run(["bash", str(script), url, cookie])
-    body_file = Path("/root/zh_pick/body.txt")
+    # 抓取脚本把正文固定写到家目录下的 zh_pick/：运行时推导，不写死绝对路径。
+    body_file = Path.home() / "zh_pick" / "body.txt"
     if code != 0 or not body_file.exists():
         return {"ok": False, "error": (err or out or "知乎抓取失败").strip()[:300]}
     return {"ok": True, "title": "", "author": "", "text": body_file.read_text("utf-8", "ignore").strip(), "images": []}

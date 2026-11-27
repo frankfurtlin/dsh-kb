@@ -35,7 +35,7 @@
 - 标签已经走 `report_tags.report_id`，不是 path；实体、图谱页、Wiki 页的键是 slug，也跟 path 无关；
 - 语义字段（title / category / series / date / tags / summary / body）已经在库里，缺的是「谁提供」；
 - host 半（`lib/index.js:21,186`）和 Caddy（`/etc/caddy/Caddyfile:89-95`）只认 `/kb` 前缀，换身份对这两层零改动；检索结果里已经有 `article:<slug>` / `node:<slug>` 这种非路径 id 的先例（`kb_store.py:1836,1887`），前端本来就能容忍；
-- 外部写入者共 4 处：`market-report`（目录和文件名各写一次日期）、`/root/scripts/digest`（`mkdir -p $KB/$DATE`）、插件自己的剪藏、`fleet/scripts/import-*.py`（默认目录还指向已废弃的 `betterlife/reports`）。
+- 外部写入者共 4 处：`market-report`（目录和文件名各写一次日期）、`~/scripts/digest`（`mkdir -p $KB/$DATE`）、插件自己的剪藏、`fleet/scripts/import-*.py`（默认目录还指向已废弃的 `betterlife/reports`）。
 
 ## 2. 数据本身说明了什么
 
@@ -53,7 +53,7 @@
 3. **路径已经泄漏进公开链接**（`/kb-public/reports/<rel>`），换身份必须留别名。
 
 > 2026-11-25 更新：这批 mc 历史已按要求清除（395 篇报告 + 213 个图谱页 + 351 篇 Wiki 文章），
-> 归档在 `/root/backups/mc-versions-20261125.tar.gz`。本节数字保留，作为「日期目录 ≈ 入库批次」的证据。
+> 归档在 `~/backups/mc-versions-20261125.tar.gz`。本节数字保留，作为「日期目录 ≈ 入库批次」的证据。
 
 ## 3. 别人怎么做的
 
@@ -169,14 +169,14 @@ P0 / P1 / P2 / P3 与 Office 预览已落地：
 | **P1 投喂入口** | `POST /api/kb/upload`（多文件）/ `POST /api/kb/ingest`（文本 / 链接）+ 面板「投喂」 | 浏览器实测：上传 Markdown、粘贴文本均入库并出现在列表 |
 | **P1 多格式抽取** | `kb_extract.py`：html / md / txt / pdf / docx / xlsx / pptx / 图片 / 音视频 | PDF 3619 字 + 首页缩略图；PNG 缩略图 |
 | **P1 音视频转写** | 本地 SenseVoice（sherpa-onnx），ffmpeg 抽音轨；无音轨自动跳过 | 18.45s 视频转写命中原文；搜索「交接」能搜到音频/视频文档的转写句 |
-| **P1 私有 blob** | sha256 内容寻址 + AES-256-GCM（AAD 绑定 sha），密钥 `/root/.secrets/kb-blob.key` | 12MB 随机文件主存 COS，按 sha 取回逐字节一致 |
+| **P1 私有 blob** | sha256 内容寻址 + AES-256-GCM（AAD 绑定 sha），密钥 `~/.secrets/kb-blob.key` | 12MB 随机文件主存 COS，按 sha 取回逐字节一致 |
 | **P1 COS 策略** | >10MB 主存 COS（本地不留原件）；小文件本地 + 后台加密镜像 | 实测 `kb-private/blobs/...enc` 全部可解密；删除后 COS 对象同步清掉 |
 | **P2 左侧导航** | 时间线（今天/本周/本月/今年/更早 + 月份）、系列、标签、保存视图；分类折叠到底部 | 时间线「本月」=39、系列「A股市场全景」=20，保存视图可建可应用 |
 | **P3 死链修复** | 121 个报告里的 356 处 `/mine/...` 改成随深度计算的相对路径；`assets/shell.{css,js}` 与 `/kb/static/icon-192.png` 实测 200 | 迁移后 blob 内是 `/kb/reports/assets/...` 绝对路径，沙箱 iframe 正常渲染 |
 | **P3 存量迁移** | `app/cli_migrate_reports.py`：**全部**文件型 HTML → blob + doc 行（含公开的 4 篇；公开报告保持原文与相对素材，继续按原 URL 由 `/kb-public/reports/<path>` 从 blob 输出）；私有报告 HTML 改由 `doc/<uid>` 沙箱 iframe 渲染 | 4 个公开 URL 字节级一致、配图 200；`reports/` 里 HTML 归零（只剩 assets/images）；公开 doc 的查看页嵌 `/kb-public` 链接 |
 | **P3 附件迁移** | `app/cli_migrate_assets.py`：`reports/` 下 326 个非 HTML 附件（图片/CSS/JS/数据文件，125MB）→ `kb_blob` + `asset(path→sha)` 表，路由按原路径解密输出；迁完删除原文件并清空 99 个空目录 | `/kb/reports/*` 与 `/kb-public/reports/*` 均 200；抽样 3 个文件与备份 sha256 一致；公开页 7 张图 0 失败 |
 | **Office 预览** | LibreOffice 24.8.6.2（dnf 安装）；docx/xlsx/pptx → PDF → 首页 PNG 缩略图 | 三个格式实测产出 PNG（2–8s），中文渲染正常；无 soffice 时优雅降级 |
-| **写入端接入** | market-report（每日 15:10，Hermes cron）、digest（每周六 09:01，systemd timer）与剪藏都调 `/root/scripts/kb/kb_publish.py` / `kb_clip._persist` 投喂；投喂失败直接报错退出，不再回落写文件 | 真实 build 产物投喂成功；重复投喂幂等；投喂脚本缺失时 exit 1 |
+| **写入端接入** | market-report（每日 15:10，Hermes cron）、digest（每周六 09:01，systemd timer）与剪藏都调 `~/scripts/kb/kb_publish.py` / `kb_clip._persist` 投喂；投喂失败直接报错退出，不再回落写文件 | 真实 build 产物投喂成功；重复投喂幂等；投喂脚本缺失时 exit 1 |
 
 测试基线：**125 passed**（含新增 `tests/test_ingest.py` 16 条、`tests/test_extract.py` 37 条）。
 

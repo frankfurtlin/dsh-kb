@@ -12,12 +12,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+from pathlib import Path
 
 from app import config
 from app.services import kb_public, kb_store
 
-DEFAULT_FILE = "/root/workspace/betterlife/data/kb_public.json"
+# 老站数据在同机另一个项目里：默认按家目录推导，可用 KB_PUBLIC_FILE 覆盖。
+DEFAULT_FILE = os.environ.get("KB_PUBLIC_FILE") or str(
+    Path.home() / "workspace" / "betterlife" / "data" / "kb_public.json"
+)
 
 
 def main(argv: list[str] | None = None) -> int:

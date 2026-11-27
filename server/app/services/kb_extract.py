@@ -65,7 +65,10 @@ _ASR_LOCK = threading.Lock()
 _ASR_DECODE_LOCK = threading.Lock()
 _ASR: Any = None
 _ASR_ERROR = ""
-_DEFAULT_ASR_DIR = Path("/root/.dsh/speech-to-text/sensevoice/models/sensevoice-onnx")
+# SenseVoice 模型装在 DSH 家目录下：按 DSH_HOME / 家目录运行时推导。
+_DEFAULT_ASR_DIR = Path(os.environ.get("DSH_HOME") or (Path.home() / ".dsh")) / (
+    "speech-to-text/sensevoice/models/sensevoice-onnx"
+)
 
 _EXT_MIME = {
     ".html": "text/html",

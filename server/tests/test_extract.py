@@ -9,7 +9,7 @@
 - png：缩略图最长边 480，坏图不抛只降级；
 - 音视频：ffmpeg 现场造 1 秒静音 mp4 / mp3，`transcribe=False` 只取时长与缩略图；
 - 未知类型 / 空文件 / 超过 200MB 保护的兜底；
-- 真实转写：`/root/workspace/experiment/videos/tts/s2.mp3`（「因为每一次交接，都会丢掉
+- 真实转写：`~/workspace/experiment/videos/tts/s2.mp3`（「因为每一次交接，都会丢掉
   上下文。」），文件不存在就整条 skip。
 
 每个用例都过 `_assert_shape()`：返回 dict 的键必须齐全、类型必须正确。上传接口依赖这个
@@ -22,6 +22,7 @@ OCR 不做断言：它在 `KB_OCR=1` 且 tesseract 有 chi_sim 时才跑，识�
 from __future__ import annotations
 
 import io
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -48,7 +49,11 @@ KEYS = {
 STRING_KEYS = ("text", "title", "kind", "transcript", "thumbnail_mime", "notes")
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
-REAL_AUDIO = Path("/root/workspace/experiment/videos/tts/s2.mp3")
+# 真实语音样例放在家目录的 experiment 下：运行时推导，可用 KB_REAL_AUDIO 覆盖。
+REAL_AUDIO = Path(
+    os.environ.get("KB_REAL_AUDIO")
+    or (Path.home() / "workspace" / "experiment" / "videos" / "tts" / "s2.mp3")
+)
 
 FFMPEG = shutil.which("ffmpeg")
 FFPROBE = shutil.which("ffprobe")
