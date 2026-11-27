@@ -49,7 +49,9 @@ def _asset_version() -> str:
 
 ASSET_VERSION = _asset_version()
 
-DEFAULT_REPORTS_DIR = "/root/workspace/kb-data/reports"  # 2026-11-21 从 betterlife/reports 迁出
+# v1.0：存量报告与附件全部迁进索引库 + 私有 blob，这里只需要一个空目录充当
+# 扫描根与路径校验边界；默认放插件自己的 data/ 下，不再占工作区顶层。
+DEFAULT_REPORTS_DIR = str(SERVER_DIR / "data" / "reports")
 # 插件自己的索引库（SQLite：报告元数据 + 摘要/正文文本 + 已读/收藏状态）。
 # 与 reports/ 分离：报告目录始终只读，本目录是插件唯一写入位置。
 DEFAULT_DATA_DIR = str(SERVER_DIR / "data")

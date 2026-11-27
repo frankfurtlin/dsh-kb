@@ -48,7 +48,7 @@ SQLite kb.sqlite  ── ② cache summary + full text (≤20,000 characters)
 ⑥ output: drawer preview, original file, public link, DSH tools
 ```
 
-`reports/` is the only source of truth. Everything derived — text cache, summaries, tags, embeddings, graph nodes, wiki articles — can be rebuilt from it. The single write target is `KB_DATA_DIR/kb.sqlite`.
+Since v1.0 the source of truth is the index plus the private blob store: file-backed reports under `reports/` are indexed, and everything ingested (daily reports, digest, clips, uploads) exists only as `reports` rows plus blobs. Derived data — text cache, summaries, tags, embeddings, graph nodes, wiki articles — is rebuilt from the index; the file-backed subset can be rebuilt from `reports/`. The single write target is `KB_DATA_DIR/kb.sqlite`.
 
 ## Install
 
@@ -96,6 +96,8 @@ The "知识库" row appears in the sidebar after "Automation tasks". The host pr
 ## Usage
 
 Open the panel from the sidebar. It starts on the report list; `⌘K` / `Ctrl+K` focuses the search box, `J` / `K` move the list cursor, `O` or `Enter` opens a report, `S` stars it, `Esc` closes the drawer, and `?` shows the shortcut help. Read and star state is stored in the index, so it survives a refresh or a different browser.
+
+New in v1.0: the **投喂** (ingest) button accepts files or pasted text/links — HTML, Markdown, TXT, PDF, Word, Excel, PPT, images, audio and video. Text is extracted in-process; audio and video are transcribed locally with SenseVoice and the transcript becomes searchable body text. Ingested documents are rows in the index (no file under `reports/`). Files over 10 MB are encrypted with AES-256-GCM and stored in COS; smaller ones live in a content-addressed local blob store and are mirrored to COS encrypted.
 
 Batch work runs from the server directory, using the plugin venv:
 
@@ -156,12 +158,12 @@ Public links also need a `/kb-public` reverse-proxy route in Caddy; the exact bl
 
 **Operations.** Bulk read/star/public for up to 500 reports, saved filters, `GET /healthz`, a slow-request log, and one JSON error shape for every failure.
 
-**Data and storage.** `reports/` stays read-only. The index is derived data plus user state and model output. Deleting `kb.sqlite` restores content and tags from the reports, but read/star/public timestamps and the event history are gone, so back the file up before rebuilding. `report_events` keeps an append-only trail: ingest, reclassify, AI enrichment, state changes, public marks and failures. That is how "why is this report like this now" gets answered.
+**Data and storage.** `reports/` (`server/data/reports/`) is now an empty directory, kept only as the scan root and path boundary: all reports, images, CSS and data files (326 assets) live in the content-addressed encrypted store and are served back at their original paths. Deleting `kb.sqlite` restores the file-backed reports and their tags, but **v1.0 ingested documents and their blobs live only in the index** (`reports.uid` rows plus `data/blobs/` and the encrypted COS mirror), so back up the sqlite file, the blob directory and the blob key (`KB_BLOB_KEY_FILE`, by default `~/.secrets/kb-blob.key`) before rebuilding. `report_events` keeps an append-only trail: ingest, reclassify, AI enrichment, state changes, public marks and failures. That is how "why is this report like this now" gets answered.
 
 ## What it doesn't do
 
 - It is not multi-user. One index per install: read, star and public state are global, identities come from the DSH login, and there are no per-user views.
-- It is not a crawler. It indexes `reports/` and clips what you paste; it does not walk the old site or watch feeds.
+- It is not a crawler. It indexes what you feed it — file reports under `reports/`, clips and uploads — but does not walk feeds.
 - It is not bilingual. Content, categories, prompts and the UI are Chinese, and the model answers in Chinese.
 - It does not stand alone. AI features need the host half; with it down, `ask` returns a structured error and the digest becomes a statistics view, while browsing and search keep working.
 - It is not exhaustive. The graph canvas renders the top 200 nodes, and the retrieval evaluation is 16 queries — enough to compare modes, not to prove a change.

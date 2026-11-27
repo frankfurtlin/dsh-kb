@@ -129,14 +129,26 @@ def enrich_report(path: str, *, force: bool = False) -> dict:
 
 
 def _full_body(path: str) -> str:
+    """优先用索引里的正文；文件型报告库内没有正文时才回落到磁盘。"""
     from app.services import kb_index
 
+    conn = kb_store._connect()  # noqa: SLF001（同包内部工具）
+    try:
+        row = conn.execute("SELECT body FROM reports WHERE path = ?", (path,)).fetchone()
+    finally:
+        conn.close()
+    if row and (row["body"] or "").strip():
+        return row["body"]
     _, body = kb_store._extract_text(kb_index.REPORTS_DIR / path)  # noqa: SLF001（同包内部工具）
     return body
 
 
 def enrich_pending(limit: int = 3, *, include_failed: bool = False) -> dict:
     """补一小批 pending 报告；返回统计。"""
+    info = kb_ai.status()
+    if not info.get("available"):
+        return {"ok": False, "skipped": True, "reason": info.get("reason") or "模型不可用",
+                "enriched": 0, "failed": 0, "remaining": 0}
     if not kb_ai.is_configured():
         return {"ok": False, "error": "AI 未配置：缺少 DSH AI 桥密钥（server/.ai-secret）", "enriched": 0, "failed": 0, "remaining": 0}
     items = kb_store.next_pending(limit=limit, include_failed=include_failed)

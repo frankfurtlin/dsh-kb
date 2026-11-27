@@ -31,10 +31,13 @@ CATEGORIES = (
     "话题精读",
     "策略研究",
     "个股分析",
+    "博客",
     "旅行影像",
     "影像收录",
     "技术演示",
     "其他",
+    "记忆提炼",
+    "剪藏",
 )
 
 _CATEGORY_RULES = (
@@ -68,9 +71,11 @@ def _read_title(path: Path, fallback: str) -> str:
 
 
 def _read_category_override(path: Path) -> str:
+    # 分类标记可能落在很长的内联 CSS 之后（模板生成的报告动辄十几 KB），
+    # 所以这里读 64KB 而不是 8KB，避免「文件自己说了算」失效。
     try:
         with path.open("r", encoding="utf-8", errors="replace") as handle:
-            head = handle.read(8192)
+            head = handle.read(65536)
     except OSError:
         return ""
     match = _CATEGORY_RE.search(head)
@@ -87,11 +92,41 @@ def _category_for(title: str, rel: str) -> str:
 
 
 def _date_for(rel: str) -> str:
+    """目录名 → ISO 日期（写入批次；只在文件名/标题都没日期时兜底）。"""
     match = _DATE_DIR_RE.match(rel)
     if not match:
         return ""
     year, month, day = match.groups()
-    return f"{year}-{month}-{day}"
+    return _iso_date(year, month, day)
+
+
+_FILENAME_DATE_RE = re.compile(r"(?<!\d)(20\d{2})[-_.]?(0[1-9]|1[0-2])[-_.]?(0[1-9]|[12]\d|3[01])(?!\d)")
+_TITLE_DATE_RE = re.compile(r"(20\d{2})\s*[年./-]\s*(\d{1,2})\s*[月./-]\s*(\d{1,2})")
+
+
+def _iso_date(year: str, month: str, day: str) -> str:
+    import datetime as _dt
+
+    try:
+        return _dt.date(int(year), int(month), int(day)).isoformat()
+    except (TypeError, ValueError):
+        return ""
+
+
+def _published_for(rel: str, title: str = "") -> str:
+    """内容日期：文件名里的 8 位日期 > 标题里的日期 > 目录名（入库批次）。
+
+    v1.0：日期不再只认目录（`YYYYMMDD/`），否则批量导入的文件会把
+    「入库那天」当成内容日期；文件名/标题都没有日期时才回落到目录。
+    """
+    name = str(rel or "").rsplit("/", 1)[-1]
+    match = _FILENAME_DATE_RE.search(name)
+    if match:
+        return _iso_date(*match.groups())
+    match = _TITLE_DATE_RE.search(str(title or ""))
+    if match:
+        return _iso_date(match.group(1), match.group(2), match.group(3))
+    return _date_for(rel)
 
 
 def _mc_series(rel: str, title: str) -> str:
@@ -182,12 +217,14 @@ def scan() -> list[dict]:
             continue
         title = _read_title(path, fallback=rel)
         category = _read_category_override(path) or _category_for(title, rel)
+        published = _published_for(rel, title)
         items.append(
             {
                 "title": title,
                 "category": category,
                 "series": _series_for(title, rel, category),
-                "date": _date_for(rel),
+                "date": published,
+                "published_at": published,
                 "path": rel,
                 "url": f"reports/{rel}",
                 "size": stat.st_size,

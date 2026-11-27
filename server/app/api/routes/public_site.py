@@ -22,7 +22,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
 
-from app.services import kb_public, report_html
+from app.services import kb_blob, kb_public, kb_store, report_html
 
 router = APIRouter()
 
@@ -139,10 +139,14 @@ def _serve(rel: str, head: bool):
         if index.is_file():
             path = index
             rel = rel.rstrip("/") + "/index.html"
-    if path is None or not path.is_file():
-        raise HTTPException(status_code=404, detail="报告不存在")
+    on_disk = path is not None and path.is_file()
+    is_html = rel.lower().endswith((".html", ".htm"))
 
-    if path.suffix.lower() in (".html", ".htm"):
+    if is_html and not on_disk:
+        # v1.0：公开报告已迁进索引库（HTML 在私有 blob 里），按 path 回落。
+        return _serve_from_blob(rel, head)
+
+    if is_html:
         if not kb_public.is_public(rel):
             raise HTTPException(status_code=404, detail="报告不存在")
         if head:
@@ -155,9 +159,44 @@ def _serve(rel: str, head: bool):
 
     if not kb_public.allowed_asset(rel):
         raise HTTPException(status_code=404, detail="资源不存在")
+    if not on_disk:
+        # v1.0：附件在内容寻址存储里，按路径查表后解密输出。
+        row = kb_store.get_asset(rel)
+        if row is None:
+            raise HTTPException(status_code=404, detail="资源不存在")
+        try:
+            data = kb_blob.get(row["sha"])
+        except Exception:  # noqa: BLE001
+            raise HTTPException(status_code=404, detail="资源不可用") from None
+        return Response(
+            data,
+            media_type=row.get("mime") or "application/octet-stream",
+            headers={"Cache-Control": "public, max-age=300", "X-Robots-Tag": "noindex"},
+        )
     return FileResponse(
         path,
         headers={"Cache-Control": "public, max-age=300", "X-Robots-Tag": "noindex"},
+    )
+
+
+def _serve_from_blob(rel: str, head: bool):
+    """库里文档的公开访问：正文在私有 blob，按原路径匿名输出。"""
+    if not rel.lower().endswith((".html", ".htm")) or not kb_public.is_public(rel):
+        raise HTTPException(status_code=404, detail="报告不存在")
+    doc = kb_store.get_report(rel)
+    sha = (doc or {}).get("blob_sha") or ""
+    if doc is None or not sha:
+        raise HTTPException(status_code=404, detail="报告不存在")
+    if head:
+        return Response(status_code=200, media_type="text/html; charset=utf-8")
+    try:
+        data = kb_blob.get(sha)
+    except Exception:  # noqa: BLE001 - blob 丢失按 404 处理
+        raise HTTPException(status_code=404, detail="报告内容不可用") from None
+    text = data.decode("utf-8", errors="replace")
+    return HTMLResponse(
+        report_html.rewrite_html(text, prefix=kb_public.PUBLIC_PREFIX),
+        headers={"Cache-Control": "no-cache", "X-Robots-Tag": "noindex, nofollow"},
     )
 
 

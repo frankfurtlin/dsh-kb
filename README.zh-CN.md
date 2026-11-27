@@ -2,7 +2,7 @@
 
 # dsh-kb 「知识库」
 
-**把 `reports/` 里的 HTML 报告变成可浏览、可检索、可问答的本地知识库，DSH 侧栏点开即用。**
+**把报告、剪藏和投喂的内容变成可浏览、可检索、可问答的本地知识库，DSH 侧栏点开即用。**
 
 [![Version](https://img.shields.io/badge/version-0.13.0-blue)](package.json)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -13,9 +13,11 @@
 
 ![知识库主面板：左侧导航、报告卡片与搜索](docs/review-shots/01-home.png)
 
+> 架构总览（写入 → 摄取 → 存储 → 读取 → 出口）：[docs/ARCHITECTURE.html](docs/ARCHITECTURE.html)
+
 ## 这是什么
 
-dsh-kb 是 DSH 的知识库插件：侧栏常驻「知识库」一行，主面板内嵌 FastAPI 页面，宿主把 `/kb/*` 反代到本机 8816 并复用 DSH 登录鉴权。`reports/` 只读、是唯一事实源；插件唯一的写入口是自己的 SQLite 索引（摘要、已读/收藏、公开标记、AI 产物、向量）。AI 摘要、分类与问答都走 DSH 默认模型，插件不持有模型密钥。
+dsh-kb 是 DSH 的知识库插件：侧栏常驻「知识库」一行，主面板内嵌 FastAPI 页面，宿主把 `/kb/*` 反代到本机 8816 并复用 DSH 登录鉴权。v1.0 起主存储是**索引库 + 私有 blob**（DB-first）：每日报告、周度推送、剪藏和手动投喂都不再写文件，`reports/`（`server/data/reports/`）现在是空目录（只作扫描根与路径校验边界）：报告、图片、CSS 等 326 个附件全部在内容寻址存储里（加密 blob，按原路径输出）。插件唯一的写入口是自己的 SQLite 索引（摘要、已读/收藏、公开标记、AI 产物、向量、blob 台账）。AI 摘要、分类与问答都走 DSH 默认模型，插件不持有模型密钥。
 
 ## 功能
 
@@ -26,6 +28,7 @@ dsh-kb 是 DSH 的知识库插件：侧栏常驻「知识库」一行，主面�
 - **LLM Wiki**：按高频主题生成带引用的长文，参与检索与问答。
 - **公开外链**：单篇标记公开后，匿名只读 `/kb-public/...`，不需要 DSH 账号。
 - **剪藏**：微信 / 小红书 / 知乎 / 普通网页链接粘贴入库（v0.13）。
+- **投喂（v1.0，DB-first）**：面板「投喂」可上传文件或粘贴文本/链接——HTML / MD / TXT / PDF / Word / Excel / PPT / 图片 / 音视频都行。正文抽取后直接入库，**不写 `reports/`**；Word/Excel/PPT 用 LibreOffice 转 PDF 再取首屏做缩略图；音视频用本地 SenseVoice 转写成正文并进检索；>10MB 的文件加密（AES-256-GCM）后主存 COS，小文件走本地内容寻址存储并后台加密镜像到 COS。
 - **DSH 工具**：`kb_search` / `kb_get` / `kb_ask`，agent 在对话里直接检索与提问。
 
 ## 安装
@@ -54,7 +57,7 @@ curl -s http://127.0.0.1:8816/healthz
 
 把 betterlife 老站的**报告库**拆成独立 DSH 插件：侧栏常驻行「知识库」（`order: 15`，
 排在「Automation tasks」之后），主面板内嵌同源 iframe。宿主半把 `/kb/*` 反代到本机
-`127.0.0.1:8816` 的 FastAPI；后端只读 betterlife 的 `reports/`，唯一的写入点是自己的
+`127.0.0.1:8816` 的 FastAPI；后端读 `reports/` 与索引库，唯一的写入点是自己的
 SQLite 索引库（摘要/正文缓存 + 已读/收藏 + 公开标记 + AI sidecar + 向量）。
 
 另有一条**匿名只读外链**（P6）：作者把某篇报告标记为「公开」后，别人不需要 DSH 账号，
@@ -82,7 +85,7 @@ SQLite 索引库（摘要/正文缓存 + 已读/收藏 + 公开标记 + AI sidec
 
 **术语**（README 其余部分沿用）：
 
-- **报告**：`reports/` 下的一篇 HTML，是知识的最小单位，也是唯一的事实源。
+- **报告**：索引库里的一行文档（v1.0 起），或 `reports/` 下的一篇文件型 HTML（只剩公开页）；两者都能在列表里打开。
 - **分类**：一级主题（当前 8 类）；**系列**：分类下的项目/版本线（当前 22 组）。
 - **标签**：AI 从正文抽出的自由词（如 `#A股收盘`、`#半导体`），跨分类可复用。
 - **实体**：结构化名词（公司、产品、人物、指标），带类型，是未来图谱的节点。
@@ -107,7 +110,7 @@ SQLite 索引库（摘要/正文缓存 + 已读/收藏 + 公开标记 + AI sidec
 
 ### 设计原则
 
-1. **索引永远是派生物**：分类、标签、关系、向量都能从 `reports/` 重建，不产生「只存在于
+1. **文件型报告是派生物，DB 文档不是**：文件型的分类、标签、关系、向量可以从 `reports/` 重建；v1.0 投喂的文档只存在于索引库与私有 blob，必须一起备份（见「备份」）。不产生「只存在于
    索引里、丢了就找不回」的知识。
 2. **可解释、可覆盖**：每条 AI 结论保留来源（模型、时间、原文片段），允许人工覆盖且覆盖优先。
 3. **增量优先、成本可控**：新报告只跑增量；全量重算由显式命令触发（`refresh` / CLI），
@@ -497,7 +500,7 @@ host 半默认反代 `127.0.0.1:8816`；如需临时指向其它端口，可设
 | GET | `/api/kb/tree` | 导航树：`{total, unread, starred, public, categories, series, dates, tags, scan_total}`；接受 `q/category/date_from/date_to/view/tag`，计数随筛选收敛；`tags` 为全局 top 15 标签 |
 | GET | `/api/kb/search?q=` | 与列表相同的检索，返回 `{q, items, total}` |
 | GET | `/api/kb/search?q=&mode=` | 混合检索：`mode=auto|hybrid|lexical`；返回 `{q, items, total, mode}`，item 带 `score/semantic_score/match/snippet` |
-| POST | `/api/kb/clip` | body `{text}`：剪藏 —— 从任意粘贴文本里抽 URL，按平台抓正文入库；返回 `{ok, imported, failed, items[{url,site,platform,ok,title,author,error,path,chars}]}` |
+| POST | `/api/kb/clip` | body `{text}`：剪藏 —— 从任意粘贴文本里抽 URL，按平台抓正文入库；返回 `{ok, imported, failed, items[{url,site,platform,ok,title,author,error,uid,path,doc_url,updated,chars}]}` |
 | GET | `/api/kb/report/{path:path}` | 单篇 `{item}`（含 `preview` 前 1200 字、AI 摘要/要点/标签/实体）；不存在 404 |
 | GET | `/api/kb/tags?q=&limit=` | 标签列表：`{tags:[{name, reports, updated_at}]}`（按报告数倒序） |
 | GET | `/api/kb/events?path=&limit=` | 变更轨迹：`{events:[{id,path,kind,payload,model,at}]}`，kind=`ai_enrich|classify|classify_error|state|public|ai_error` |
@@ -539,8 +542,9 @@ iframe 内使用 `/kb/` 这一套。
 ## 剪藏（v0.13，2026-11-19）
 
 工具栏的「剪藏」按钮打开一个输入框：把微信/小红书/知乎/普通网页的链接连同周围的废话一起贴进去，
-点「提取到知识库」就会抓正文、转成自包含 HTML、落到 `reports/YYYYMMDD/clip-<slug>-<sha1前6>.html`，
-然后立刻出现在列表里（分类「剪藏」）。报告顶部写清**出处**：来源链接、站点、平台、抓取时间。
+点「提取到知识库」就会抓正文、转成自带样式的 HTML **直接投喂进索引库**（不写 `reports/`），
+然后立刻出现在列表里（分类「剪藏」）。同一条链接再剪一次是**更新**原文档（按 `source_url` 认），
+不会堆副本。文档顶部写清**出处**：来源链接、站点、平台、抓取时间。
 
 | 平台 | 抓取方式 | 依赖 |
 | --- | --- | --- |

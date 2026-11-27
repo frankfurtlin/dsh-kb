@@ -71,6 +71,10 @@ os.environ["KB_GRAPH_AUTO"] = "0"
 os.environ["KB_GRAPH_TOPIC_MIN_REPORTS"] = "2"
 os.environ["KB_WIKI_DIR"] = str(_TMP_ROOT / "wiki")
 os.environ["KB_WIKI_AUTO"] = "0"
+# v1.0：私有 blob 与 COS 镜像都用临时目录 / 禁用网络，避免测试写生产 data/blobs。
+os.environ["KB_BLOB_DIR"] = str(_TMP_ROOT / "blobs")
+os.environ["KB_BLOB_KEY_FILE"] = str(_TMP_ROOT / "kb-blob.key")
+os.environ["KB_COS_ENV"] = str(_TMP_ROOT / "no-cos.env")
 
 from fastapi.testclient import TestClient  # noqa: E402
 

@@ -13,6 +13,7 @@ import hashlib
 import html
 import json
 import re
+import secrets
 import sqlite3
 from datetime import datetime, timedelta
 import threading
@@ -224,9 +225,32 @@ CLASSIFY_COLUMNS = {
     "classify_error": "TEXT NOT NULL DEFAULT ''",
 }
 
+# 显式分类标记（报告 HTML 里的 `<!-- bl:category: X -->`）：文件自己说了算，
+# 不再让 AI 分类器覆盖（否则剪藏/博客/记忆提炼会被改回「话题精读」）。
+PIN_COLUMNS = {
+    "category_pinned": "INTEGER NOT NULL DEFAULT 0",
+}
+
 # P10/P12：报告内容指纹（sha1），供图谱节点增量编译与「过期节点」检测。
 WIKI_COLUMNS = {
     "content_hash": "TEXT NOT NULL DEFAULT ''",
+}
+
+# v0.9（2026-11-25）：DB-first 文档 + 私有 blob。
+# - 文件型报告 doc_kind='file'，path 仍是相对路径（sync 只管理这类）。
+# - DB 型文档 doc_kind='doc'，path 用合成键 `doc/<uid>.html`（保住 path 唯一约束，
+#   不必重建表），对外身份用 uid。
+DOC_COLUMNS = {
+    "uid": "TEXT NOT NULL DEFAULT ''",
+    "doc_kind": "TEXT NOT NULL DEFAULT 'file'",
+    "mime": "TEXT NOT NULL DEFAULT ''",
+    "blob_sha": "TEXT NOT NULL DEFAULT ''",
+    "thumb_sha": "TEXT NOT NULL DEFAULT ''",
+    "published_at": "TEXT NOT NULL DEFAULT ''",
+    "source": "TEXT NOT NULL DEFAULT 'file'",
+    "storage_tier": "TEXT NOT NULL DEFAULT 'local'",
+    # 剪藏/导入类文档的来源链接：同一条链接重复剪藏走「更新」而不是新建副本。
+    "source_url": "TEXT NOT NULL DEFAULT ''",
 }
 
 AI_COLUMNS = {
@@ -278,10 +302,48 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         **PUBLIC_COLUMNS,
         **META_COLUMNS,
         **CLASSIFY_COLUMNS,
+        **PIN_COLUMNS,
         **WIKI_COLUMNS,
+        **DOC_COLUMNS,
     }.items():
         if column not in existing:
             conn.execute(f"ALTER TABLE reports ADD COLUMN {column} {definition}")
+    # v0.9：私有 blob 台账（内容寻址 + COS 加密镜像状态）。
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS blob ("
+        " sha TEXT PRIMARY KEY,"
+        " size INTEGER NOT NULL DEFAULT 0,"
+        " mime TEXT NOT NULL DEFAULT '',"
+        " name TEXT NOT NULL DEFAULT '',"
+        " tier TEXT NOT NULL DEFAULT 'local',"
+        " mirrored INTEGER NOT NULL DEFAULT 0,"
+        " mirror_at TEXT NOT NULL DEFAULT '',"
+        " created_at TEXT NOT NULL DEFAULT '',"
+        " error TEXT NOT NULL DEFAULT ''"
+        ")"
+    )
+    # 插件级设置（键值对）：目前用于记录用户选定的模型 provider/model。
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS setting ("
+        " key TEXT PRIMARY KEY,"
+        " value TEXT NOT NULL DEFAULT '',"
+        " updated_at TEXT NOT NULL DEFAULT ''"
+        ")"
+    )
+    # v1.0：报告附件（历史图片/CSS/数据文件）也进内容寻址存储，按原路径索引。
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS asset ("
+        " path TEXT PRIMARY KEY,"
+        " sha TEXT NOT NULL,"
+        " mime TEXT NOT NULL DEFAULT '',"
+        " size INTEGER NOT NULL DEFAULT 0,"
+        " created_at TEXT NOT NULL DEFAULT ''"
+        ")"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_asset_sha ON asset(sha)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_reports_uid ON reports(uid)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_reports_blob ON reports(blob_sha)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_reports_kind ON reports(doc_kind)")
     conn.commit()
 
 
@@ -458,13 +520,14 @@ def sync(force: bool = False) -> dict:
                 row["path"]: row
                 for row in conn.execute(
                     "SELECT path, size, mtime, title, category, series, category_rule, series_rule, date,"
-                    " content_hash"
-                    " FROM reports"
+                    " content_hash, category_pinned"
+                    " FROM reports WHERE COALESCE(doc_kind, 'file') = 'file'"
                 )
             }
             changed: list[str] = []
             now = _now()
             for path, item in incoming.items():
+                pinned = 1 if kb_index._read_category_override(kb_index.REPORTS_DIR / path) else 0
                 stat_key = (int(item["size"]), int(item["mtime"]))
                 row = existing.get(path)
                 content_changed = row is None or (row["size"], row["mtime"]) != stat_key
@@ -481,6 +544,13 @@ def sync(force: bool = False) -> dict:
                         "UPDATE reports SET content_hash=? WHERE path=?",
                         (_content_hash(kb_index.REPORTS_DIR / path), path),
                     )
+                if row is not None and int(row["category_pinned"] or 0) != pinned:
+                    # 老库没有这个列（或标记被挪进 64KB 窗外）时补写一次，不改其它字段。
+                    conn.execute(
+                        "UPDATE reports SET category_pinned=?,"
+                        " category=CASE WHEN ? = 1 THEN ? ELSE category END WHERE path=?",
+                        (pinned, pinned, item["category"], path),
+                    )
                 if not content_changed and not meta_changed:
                     continue
 
@@ -492,11 +562,13 @@ def sync(force: bool = False) -> dict:
                         """
                         INSERT INTO reports
                             (path, title, category, series, category_rule, series_rule,
-                             date, size, mtime, summary, body, content_hash, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             date, published_at, size, mtime, summary, body, content_hash,
+                             created_at, updated_at, category_pinned)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(path) DO UPDATE SET
                             title=excluded.title,
-                            date=excluded.date, size=excluded.size, mtime=excluded.mtime,
+                            date=excluded.date, published_at=excluded.published_at,
+                            size=excluded.size, mtime=excluded.mtime,
                             summary=excluded.summary, body=excluded.body,
                             content_hash=excluded.content_hash,
                             category_rule=excluded.category_rule,
@@ -504,11 +576,15 @@ def sync(force: bool = False) -> dict:
                             -- 正文变化 → AI 分类失效，生效值回落规则值。
                             category=excluded.category_rule,
                             series=excluded.series_rule,
+                            category_pinned=excluded.category_pinned,
                             updated_at=excluded.updated_at,
                             summary_ai='', key_points='[]', entities='[]', tags='[]',
                             ai_version=0, ai_at='', ai_error='',
                             category_ai='', series_ai='',
                             classify_version=0, classify_at='', classify_error=''
+                        -- v1.0：迁移后的 DB 文档与历史文件路径可能重名，sync 不得把文档
+                        -- 当成「文件变化」重置它的 AI 结果。
+                        WHERE COALESCE(reports.doc_kind, 'file') = 'file'
                         """,
                         (
                             path,
@@ -518,6 +594,7 @@ def sync(force: bool = False) -> dict:
                             item["category"],
                             item["series"],
                             item["date"],
+                            item.get("published_at") or item["date"],
                             stat_key[0],
                             stat_key[1],
                             summary,
@@ -525,6 +602,7 @@ def sync(force: bool = False) -> dict:
                             chash,
                             now,
                             now,
+                            pinned,
                         ),
                     )
                 else:
@@ -532,19 +610,24 @@ def sync(force: bool = False) -> dict:
                     conn.execute(
                         """
                         UPDATE reports SET
-                            title=?, date=?, category_rule=?, series_rule=?,
-                            category=CASE WHEN category_ai != '' THEN category_ai ELSE ? END,
-                            series=CASE WHEN category_ai != '' THEN series_ai ELSE ? END,
+                            title=?, date=?, published_at=?, category_rule=?, series_rule=?,
+                            category=CASE WHEN category_pinned = 1 THEN ? WHEN category_ai != '' THEN category_ai ELSE ? END,
+                            series=CASE WHEN category_pinned = 1 THEN ? WHEN category_ai != '' THEN series_ai ELSE ? END,
+                            category_pinned=?,
                             updated_at=?
                         WHERE path=?
                         """,
                         (
                             item["title"],
                             item["date"],
+                            item.get("published_at") or item["date"],
                             item["category"],
                             item["series"],
                             item["category"],
+                            item["category"],
                             item["series"],
+                            item["series"],
+                            pinned,
                             now,
                             path,
                         ),
@@ -669,13 +752,15 @@ def _load_json(raw: str, fallback):
 
 
 def _row_to_item(row: sqlite3.Row) -> dict:
+    keys = row.keys()
+    is_doc = ("doc_kind" in keys) and (row["doc_kind"] == "doc")
     return {
         "title": row["title"],
         "category": row["category"],
         "series": row["series"],
         "date": row["date"],
         "path": row["path"],
-        "url": f"reports/{row['path']}",
+        "url": (f"doc/{row['uid']}" if is_doc else f"reports/{row['path']}"),
         "size": row["size"],
         "mtime": row["mtime"],
         "summary": row["summary"],
@@ -703,12 +788,23 @@ def _row_to_item(row: sqlite3.Row) -> dict:
         "has_embedding": bool(row["embedding"]),
         # P6：是否已公开（可被匿名只读访问）。
         "public": bool(row["public"]),
+        # v1.0：剪藏来源链接（文件型报告为空）。
+        "source_url": (row["source_url"] if "source_url" in keys else "") or "",
         # v0.3：时间线（入库/索引/操作），用于「最近上传/最近读过」与审计。
         "created_at": row["created_at"] or "",
         "updated_at": row["updated_at"] or "",
         "read_at": row["read_at"] or "",
         "starred_at": row["starred_at"] or "",
         "public_at": row["public_at"] or "",
+        # v0.9：DB-first 文档 + 私有 blob。
+        "uid": row["uid"] if "uid" in keys else "",
+        "doc_kind": (row["doc_kind"] if "doc_kind" in keys else "") or "file",
+        "mime": row["mime"] if "mime" in keys else "",
+        "blob_sha": row["blob_sha"] if "blob_sha" in keys else "",
+        "thumb_sha": row["thumb_sha"] if "thumb_sha" in keys else "",
+        "published_at": row["published_at"] if "published_at" in keys else "",
+        "source": row["source"] if "source" in keys else "",
+        "storage_tier": row["storage_tier"] if "storage_tier" in keys else "",
     }
 
 
@@ -915,6 +1011,45 @@ def tree(
                 date_params,
             )
         ]
+
+        # v1.0 P2：时间线桶（不是目录，是 published_at 字段上的查询）。
+        def _count_between(lo: str, hi: str) -> int:
+            sql = f"SELECT COUNT(*) AS n FROM reports WHERE {date_clause}"
+            args = list(date_params)
+            if lo:
+                sql += " AND date >= ?"
+                args.append(lo)
+            if hi:
+                sql += " AND date <= ?"
+                args.append(hi)
+            return int(conn.execute(sql, args).fetchone()["n"])
+
+        today = datetime.now().date()
+        today_iso = today.isoformat()
+        week_start = (today - timedelta(days=today.weekday())).isoformat()
+        month_start = today.replace(day=1).isoformat()
+        year_start = today.replace(month=1, day=1).isoformat()
+        before_year = (today.replace(month=1, day=1) - timedelta(days=1)).isoformat()
+        timeline = [
+            {"key": "today", "label": "今天", "count": _count_between(today_iso, today_iso)},
+            {"key": "week", "label": "本周", "count": _count_between(week_start, today_iso)},
+            {"key": "month", "label": "本月", "count": _count_between(month_start, today_iso)},
+            {"key": "year", "label": "今年", "count": _count_between(year_start, today_iso)},
+            {"key": "older", "label": "更早", "count": _count_between("", before_year)},
+            {"key": "all", "label": "全部时间", "count": _count_between("", "")},
+        ]
+        months = [
+            {
+                "key": row["m"],
+                "label": f"{row['m'][:4]}年{int(row['m'][5:7])}月",
+                "count": row["n"],
+            }
+            for row in conn.execute(
+                f"SELECT substr(date, 1, 7) AS m, COUNT(*) AS n FROM reports"
+                f" WHERE {date_clause} AND date != '' GROUP BY m ORDER BY m DESC LIMIT 18",
+                date_params,
+            )
+        ]
     finally:
         conn.close()
     return {
@@ -927,6 +1062,9 @@ def tree(
         "categories": categories,
         "series": series,
         "dates": dates,
+        # v1.0 P2：时间线 / 系列 / 保存视图的左侧导航数据。
+        "timeline": timeline,
+        "months": months,
         # 标签导航（全局 top N，不受当前筛选影响，方便随时换标签）。
         "tags": tags_overview(limit=15),
     }
@@ -1249,7 +1387,10 @@ def next_pending_classify(limit: int = 3, *, include_failed: bool = False) -> li
     """取一批待分类报告；给模型只需标题/日期/规则分类/标签/摘要，不用全文。"""
     if limit <= 0:
         return []
-    clause = "classify_version < ?" + ("" if include_failed else " AND classify_error = ''")
+    clause = (
+        "classify_version < ? AND category_pinned = 0"
+        + ("" if include_failed else " AND classify_error = ''")
+    )
     conn = _connect()
     try:
         rows = conn.execute(
@@ -2292,3 +2433,340 @@ def record_wiki_job(slug: str, status: str, error: str = "") -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+# ---------- v0.9：DB-first 文档（投喂入口，不写文件） ----------
+
+
+def _new_uid() -> str:
+    """时间有序的短 id：8 位十六进制秒级时间戳 + 8 位随机。"""
+    return f"{int(time.time()):08x}{secrets.token_hex(4)}"
+
+
+def get_document(uid: str) -> dict | None:
+    """按 uid 取一条 DB 型文档。"""
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT * FROM reports WHERE uid = ? AND doc_kind = 'doc'", (uid,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    item = _row_to_item(row)
+    item["preview"] = (row["body"] or "")[:1200]
+    return item
+
+
+def create_document(
+    *,
+    title: str,
+    body: str,
+    summary: str = "",
+    mime: str = "",
+    blob_sha: str = "",
+    thumb_sha: str = "",
+    size: int = 0,
+    published_at: str = "",
+    source: str = "ingest",
+    category: str = "",
+    series: str = "",
+    tags: list[str] | None = None,
+    storage_tier: str = "local",
+    content_hash: str = "",
+    source_url: str = "",
+) -> dict:
+    """插入一条 DB 型文档；content_hash 相同则返回已有行（幂等，重复投喂不产生副本）。"""
+    chash = content_hash or hashlib.sha1((body or "").encode("utf-8")).hexdigest()
+    now = _now()
+    title = (title or "").strip() or "未命名文档"
+    pub = (published_at or "").strip()
+    date = pub[:10] if len(pub) >= 10 else now[:10]
+    cat = category or kb_index._category_for(title, "")
+    ser = series or kb_index._series_for(title, "", cat)
+    pinned = 1 if category else 0
+    tag_list = _normalize_tags(tags or [])
+    with _write_lock:
+        conn = _connect()
+        try:
+            dup = conn.execute(
+                "SELECT * FROM reports WHERE doc_kind = 'doc' AND content_hash = ? LIMIT 1",
+                (chash,),
+            ).fetchone()
+            if dup is not None:
+                return _row_to_item(dup)
+
+            uid = _new_uid()
+            path = f"doc/{uid}.html"
+            conn.execute(
+                "INSERT INTO reports (path, title, category, series, category_rule, series_rule,"
+                " date, size, mtime, summary, body, content_hash, created_at, updated_at,"
+                " uid, doc_kind, mime, blob_sha, thumb_sha, published_at, source, storage_tier,"
+                " tags, category_pinned, source_url)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'doc', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    path,
+                    title,
+                    cat,
+                    ser,
+                    cat,
+                    ser,
+                    date,
+                    int(size or len((body or "").encode("utf-8"))),
+                    int(time.time()),
+                    (summary or "")[:2000],
+                    (body or "")[:20000],
+                    chash,
+                    now,
+                    now,
+                    uid,
+                    mime or "",
+                    blob_sha or "",
+                    thumb_sha or "",
+                    pub,
+                    source or "ingest",
+                    storage_tier or "local",
+                    json.dumps(tag_list, ensure_ascii=False),
+                    pinned,
+                    (source_url or "").strip(),
+                ),
+            )
+            _rebuild_report_tags(
+                conn, path, json.dumps(tag_list, ensure_ascii=False), source="manual"
+            )
+            _refresh_tag_counts(conn)
+            _record_event(
+                conn,
+                path,
+                "ingest",
+                {
+                    "uid": uid,
+                    "source": source or "ingest",
+                    "mime": mime or "",
+                    "blob": blob_sha or "",
+                    "size": int(size or 0),
+                    "tier": storage_tier or "local",
+                },
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM reports WHERE path = ?", (path,)).fetchone()
+        finally:
+            conn.close()
+    return _row_to_item(row)
+
+
+def find_document_by_source_url(url: str) -> dict | None:
+    """按来源链接找已有文档（剪藏的重复抓取用它判断该更新哪一条）。"""
+    url = (url or "").strip()
+    if not url:
+        return None
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT * FROM reports WHERE doc_kind = 'doc' AND source_url = ?"
+            " ORDER BY updated_at DESC LIMIT 1",
+            (url,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return _row_to_item(row) if row is not None else None
+
+
+def update_document(
+    uid: str,
+    *,
+    title: str | None = None,
+    body: str | None = None,
+    blob_sha: str | None = None,
+    thumb_sha: str | None = None,
+    size: int | None = None,
+    published_at: str | None = None,
+    storage_tier: str | None = None,
+    mime: str | None = None,
+    tags: list[str] | None = None,
+) -> dict | None:
+    """更新一条 DB 文档的内容字段；内容变了就把 ai_version 归零，等后台重新增强。"""
+    row = get_document(uid)
+    if row is None:
+        return None
+    sets: list[str] = []
+    args: list[object] = []
+    if title is not None:
+        sets.append("title = ?")
+        args.append(title.strip() or "未命名文档")
+    if body is not None:
+        sets.append("body = ?")
+        args.append(body[:20000])
+    if blob_sha is not None:
+        sets.append("blob_sha = ?")
+        args.append(blob_sha)
+    if thumb_sha is not None:
+        sets.append("thumb_sha = ?")
+        args.append(thumb_sha)
+    if size is not None:
+        sets.append("size = ?")
+        args.append(int(size))
+    if mime is not None:
+        sets.append("mime = ?")
+        args.append(mime)
+    if storage_tier is not None:
+        sets.append("storage_tier = ?")
+        args.append(storage_tier)
+    if published_at:
+        sets.extend(["published_at = ?", "date = ?"])
+        args.extend([published_at, published_at[:10]])
+    if tags is not None:
+        sets.append("tags = ?")
+        args.append(json.dumps(_normalize_tags(tags), ensure_ascii=False))
+    if not sets:
+        return row
+    sets.extend(["ai_version = 0", "ai_error = ''", "updated_at = ?"])
+    args.append(_now())
+    args.append(uid)
+    with _write_lock:
+        conn = _connect()
+        try:
+            conn.execute(f"UPDATE reports SET {', '.join(sets)} WHERE uid = ?", args)
+            _record_event(conn, row["path"], "doc_update", {"uid": uid, "blob": blob_sha or ""})
+            conn.commit()
+            fresh = conn.execute("SELECT * FROM reports WHERE uid = ?", (uid,)).fetchone()
+        finally:
+            conn.close()
+    return _row_to_item(fresh) if fresh is not None else None
+
+
+def put_asset(path: str, sha: str, mime: str, size: int) -> None:
+    """登记一个附件路径 → blob 的映射（重复迁移幂等）。"""
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT INTO asset (path, sha, mime, size, created_at) VALUES (?, ?, ?, ?, ?)"
+            " ON CONFLICT(path) DO UPDATE SET sha = excluded.sha, mime = excluded.mime,"
+            " size = excluded.size",
+            (path, sha, mime, int(size), _now()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_asset(path: str) -> dict | None:
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT * FROM asset WHERE path = ?", (path.strip("/"),)).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row is not None else None
+
+
+def asset_exists(path: str) -> bool:
+    return get_asset(path) is not None
+
+
+def list_assets(prefix: str = "") -> list[dict]:
+    """按路径前缀列附件（公开站按目录白名单时用）。"""
+    prefix = (prefix or "").strip("/")
+    conn = _connect()
+    try:
+        if prefix:
+            rows = conn.execute(
+                "SELECT * FROM asset WHERE path = ? OR path LIKE ? ORDER BY path",
+                (prefix, prefix + "/%"),
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM asset ORDER BY path").fetchall()
+    finally:
+        conn.close()
+    return [dict(row) for row in rows]
+
+
+def asset_stats() -> dict:
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT COUNT(*) AS n, COALESCE(SUM(size), 0) AS b FROM asset").fetchone()
+    finally:
+        conn.close()
+    return {"assets": int(row["n"]), "bytes": int(row["b"])}
+
+
+def count_reports_by_blob(sha: str) -> int:
+    if not sha:
+        return 0
+    conn = _connect()
+    try:
+        return int(conn.execute("SELECT COUNT(*) FROM reports WHERE blob_sha = ?", (sha,)).fetchone()[0])
+    finally:
+        conn.close()
+
+
+def get_setting(key: str, default: str = "") -> str:
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT value FROM setting WHERE key = ?", (key,)).fetchone()
+    finally:
+        conn.close()
+    return row["value"] if row is not None else default
+
+
+def set_setting(key: str, value: str) -> None:
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT INTO setting (key, value, updated_at) VALUES (?, ?, ?)"
+            " ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            (key, value, _now()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def existing_paths() -> set[str]:
+    """索引里所有报告的 path（DB 型文档保留其历史 path 作为兼容键）。"""
+    conn = _connect()
+    try:
+        return {row["path"] for row in conn.execute("SELECT path FROM reports")}
+    finally:
+        conn.close()
+
+
+def doc_stats() -> dict:
+    """DB 型文档统计（投喂入口的健康度）。"""
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) n,"
+            " SUM(CASE WHEN storage_tier='cos' THEN 1 ELSE 0 END) on_cos,"
+            " COALESCE(SUM(size),0) bytes"
+            " FROM reports WHERE doc_kind='doc'"
+        ).fetchone()
+    finally:
+        conn.close()
+    return {"documents": row["n"], "on_cos": row["on_cos"] or 0, "bytes": row["bytes"] or 0}
+
+
+def backfill_published(force: bool = True) -> dict:
+    """重算存量文件型报告的 published_at 与 date（幂等，v1.0 P0）。
+
+    规则：文件名 8 位日期 > 标题里的日期 > 目录名（入库批次）。
+    只处理 `doc_kind='file'`；DB 型文档的日期在投喂时就是显式值。
+    """
+    items = kb_index.cached_scan(force=force)
+    updated = 0
+    with _write_lock:
+        conn = _connect()
+        try:
+            for item in items:
+                published = item.get("published_at") or item["date"]
+                cur = conn.execute(
+                    "UPDATE reports SET published_at = ?, date = ?"
+                    " WHERE path = ? AND COALESCE(doc_kind, 'file') = 'file'"
+                    " AND (published_at != ? OR date != ?)",
+                    (published, published, item["path"], published, published),
+                )
+                updated += max(cur.rowcount or 0, 0)
+            conn.commit()
+        finally:
+            conn.close()
+    return {"scanned": len(items), "updated": updated}

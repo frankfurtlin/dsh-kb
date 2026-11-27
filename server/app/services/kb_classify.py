@@ -156,6 +156,10 @@ def classify_pending(limit: int = 5, *, include_failed: bool = False) -> dict:
             "failed": 0,
             "remaining": 0,
         }
+    info = kb_ai.status()
+    if not info.get("available"):
+        return {"ok": False, "skipped": True, "reason": info.get("reason") or "模型不可用",
+                "classified": 0, "failed": 0, "remaining": 0}
     items = kb_store.next_pending_classify(limit=limit, include_failed=include_failed)
     classified = failed = 0
     model = kb_ai.model_label()

@@ -315,6 +315,12 @@ async function kbLoadTree(force) {
   kbRenderCats();
   kbRenderTags();
   kbRenderDates();
+  kbRenderTimeline();
+  kbRenderSeries();
+  if (typeof kbAiSyncBadge === 'function' && !window._kbAiBadgeDone) {
+    window._kbAiBadgeDone = true;
+    kbAiSyncBadge();
+  }
   var hint = kbEl('kb-side-hint');
   if (hint) {
     var bits = [data.total + ' 篇', (data.dates || []).length + ' 个日期'];
@@ -373,22 +379,6 @@ function kbRenderCats() {
       'onclick="kbSetCategory(this.dataset.cat)">' +
       '<span class="kb-cat-name">' + esc(cat.name) + '</span>' +
       '<span class="kb-cat-n">' + (kbState.q ? '—' : cat.count) + '</span></button>';
-    if (active) {
-      var series = (tree.series || []).filter(function (row) { return row.category === cat.name; });
-      if (series.length) {
-        html += '<div class="kb-series-list" role="group" aria-label="' + escAttr(cat.name) + ' 系列">';
-        html += '<button type="button" class="kb-series" data-series="" aria-pressed="' +
-          (kbState.series ? 'false' : 'true') + '" onclick="kbSetSeries(\'\')">全部系列</button>';
-        series.forEach(function (row) {
-          var on = kbState.series === row.name;
-          html += '<button type="button" class="kb-series" data-series="' + escAttr(row.name) + '" ' +
-            'aria-pressed="' + (on ? 'true' : 'false') + '" ' +
-            'onclick="kbSetSeries(this.dataset.series)">' + esc(row.name) +
-            '<span class="kb-series-n">' + row.count + '</span></button>';
-        });
-        html += '</div>';
-      }
-    }
   });
   box.innerHTML = html;
 }
@@ -571,6 +561,7 @@ function kbSetSeries(series) {
   kbState.series = kbState.series === series ? '' : (series || '');
   kbState.offset = 0;
   kbRenderCats();
+  kbRenderSeries();
   kbLoad();
 }
 
@@ -678,6 +669,12 @@ function kbResetFilters() {
   kbRenderCats();
   kbRenderTags();
   kbRenderDates();
+  kbRenderTimeline();
+  kbRenderSeries();
+  if (typeof kbAiSyncBadge === 'function' && !window._kbAiBadgeDone) {
+    window._kbAiBadgeDone = true;
+    kbAiSyncBadge();
+  }
   kbLoad();
 }
 
@@ -927,7 +924,9 @@ function kbFillDrawer(item, detail) {
     var metaParts = [];
     if (item.date) metaParts.push('<span>' + kbFmtDate(item.date) + '</span>');
     metaParts.push('<span>' + kbFmtSize(item.size) + '</span>');
-    metaParts.push('<span>' + esc(item.path) + '</span>');
+    metaParts.push('<span>' + esc(item.doc_kind === 'doc'
+      ? ('投喂 · ' + (item.source || 'ingest') + (item.mime ? ' · ' + item.mime : ''))
+      : item.path) + '</span>');
     if (item.created_at) metaParts.push('<span title="首次进入索引">入库 ' + kbFmtDate(String(item.created_at).slice(0, 10)) + '</span>');
     if (item.updated_at && item.updated_at !== item.created_at) {
       metaParts.push('<span title="最近一次索引更新">更新 ' + kbFmtDate(String(item.updated_at).slice(0, 10)) + '</span>');
@@ -939,12 +938,16 @@ function kbFillDrawer(item, detail) {
   var source = detail || item;
   if (actions) {
     var isPublic = !!item.public;
+    var isDoc = item.doc_kind === 'doc';
     actions.innerHTML =
-      '<a class="kb-btn kb-btn-primary" href="' + escAttr('reports/' + item.path) + '" target="_blank" rel="noopener">打开原文 ↗</a>' +
+      '<a class="kb-btn kb-btn-primary" href="' + escAttr(item.url || ('reports/' + item.path)) + '" target="_blank" rel="noopener">打开原文 ↗</a>' +
+      (isDoc ? (item.blob_sha
+        ? '<a class="kb-btn kb-btn-ghost" href="' + escAttr(API + '/kb/blob/' + item.blob_sha + '?download=1') + '" target="_blank" rel="noopener">下载原件</a>'
+        : '') :
       '<button type="button" class="kb-btn kb-btn-ghost' + (isPublic ? ' is-on' : '') + '" id="kb-drawer-public" ' +
         'aria-pressed="' + (isPublic ? 'true' : 'false') + '" onclick="kbDrawerTogglePublic()" ' +
         'title="公开后可用外链分享，无需 DSH 账号">' + (isPublic ? '◉ 已公开' : '◌ 公开') + '</button>' +
-      (isPublic ? '<button type="button" class="kb-btn kb-btn-ghost" id="kb-drawer-copy" onclick="kbCopyPublicLink()">复制链接</button>' : '') +
+      (isPublic ? '<button type="button" class="kb-btn kb-btn-ghost" id="kb-drawer-copy" onclick="kbCopyPublicLink()">复制链接</button>' : '')) +
       '<button type="button" class="kb-btn kb-btn-ghost" id="kb-drawer-star" aria-pressed="' +
         (item.starred ? 'true' : 'false') + '" onclick="kbDrawerToggleStar()">' +
         (item.starred ? '★ 已收藏' : '☆ 收藏') + '</button>' +
@@ -1725,9 +1728,9 @@ function kbDeleteSaved(index) {
 
 function kbRenderSaved() {
   var box = kbEl('kb-saved');
-  var wrap = kbEl('kb-saved-wrap');
+  var empty = kbEl('kb-saved-empty');
   if (!box) return;
-  if (wrap) wrap.classList.toggle('bl-hidden', !_kbSaved.length);
+  if (empty) empty.classList.toggle('bl-hidden', !!_kbSaved.length);
   box.innerHTML = _kbSaved.map(function (entry, index) {
     return '<span class="kb-saved-row">' +
       '<button type="button" class="kb-saved-item" data-saved="' + index + '" title="' + escAttr(kbFilterLabel(entry.snap || {})) + '" ' +
@@ -1735,4 +1738,436 @@ function kbRenderSaved() {
       '<button type="button" class="kb-iconbtn kb-saved-del" aria-label="删除保存的筛选" ' +
         'onclick="kbDeleteSaved(' + index + ')">✕</button></span>';
   }).join('');
+}
+
+
+/* ===== 剪藏：粘贴分享链接 → 知识库报告 ===== */
+var _kbClipBusy = false;
+
+function kbOpenClip() {
+  var panel = kbEl('kb-clip-panel');
+  if (!panel) return;
+  panel.classList.remove('bl-hidden');
+  var input = kbEl('kb-clip-input');
+  if (input) input.focus();
+}
+
+function kbCloseClip() {
+  var panel = kbEl('kb-clip-panel');
+  if (panel) panel.classList.add('bl-hidden');
+}
+
+function kbRenderClipResult(items) {
+  var box = kbEl('kb-clip-result');
+  if (!box) return;
+  box.classList.remove('bl-hidden');
+  box.innerHTML = (items || []).map(function (item) {
+    var ok = !!item.ok;
+    var title = ok ? (item.title || '（未取到标题）') : (item.error || '抓取失败');
+    var openPath = item.doc_url || item.path || '';
+    var meta = ok
+      ? [
+          item.chars ? item.chars + ' 字' : '',
+          item.updated ? '已更新' : '',
+          openPath ? '<a href="#" onclick="kbClipOpen(' + JSON.stringify(openPath).replace(/"/g, '&quot;') + ');return false">打开文档</a>' : ''
+        ].filter(Boolean).join(' · ')
+      : '';
+    return '<div class="kb-clip-row ' + (ok ? 'is-ok' : 'is-bad') + '">' +
+      '<span class="kb-clip-badge">' + (ok ? '已入库' : '失败') + '</span>' +
+      '<div class="kb-clip-main"><div>' + esc(title) + '</div>' +
+      '<div class="kb-clip-url">' + esc(item.url || '') + '</div>' +
+      (meta ? '<div class="kb-clip-url">' + meta + '</div>' : '') +
+      '</div></div>';
+  }).join('');
+}
+
+function kbClipOpen(path) {
+  path = String(path || '');
+  // 剪藏现在是库内文档：path = doc/<uid>.html，直接开文档页
+  if (path.indexOf('doc/') === 0) {
+    window.open(API + '/doc/' + path.slice(4).replace(/\.html$/, ''), '_blank');
+    return;
+  }
+  if (typeof kbOpenPath === 'function') { kbOpenPath(path); return; }
+  window.open(API + '/kb/report/' + path.split('/').map(encodeURIComponent).join('/'), '_blank');
+}
+
+async function kbSubmitClip() {
+  if (_kbClipBusy) return;
+  var input = kbEl('kb-clip-input');
+  var btn = kbEl('kb-clip-submit');
+  var hint = kbEl('kb-clip-hint');
+  var text = input ? input.value.trim() : '';
+  if (!text) { showToast('先粘贴带链接的文本', 'warning'); return; }
+  _kbClipBusy = true;
+  if (btn) { btn.disabled = true; btn.textContent = '抓取中…'; }
+  if (hint) hint.textContent = '正在抓取：微信/普通网页约 1-3 秒，小红书要 OCR 会久一点…';
+  try {
+    var data = await safeFetch(API + '/kb/clip', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: text })
+    });
+    if (!data) return;
+    kbRenderClipResult(data.items || []);
+    if (data.imported) {
+      showToast('已入库 ' + data.imported + ' 篇', 'success');
+      if (input) input.value = '';
+      if (typeof kbLoad === 'function') kbLoad(true);
+      if (typeof kbLoadTree === 'function') kbLoadTree(true);
+    } else {
+      showToast(data.error || '没有抓到内容', 'error', 4000);
+    }
+  } finally {
+    _kbClipBusy = false;
+    if (btn) { btn.disabled = false; btn.textContent = '提取到知识库'; }
+    if (hint) hint.textContent = '来源地址、站点、抓取时间会写进报告顶部';
+  }
+}
+
+// ---------- v0.9：投喂（上传文件 / 粘贴文本 / 链接） ----------
+
+var _kbIngestBusy = false;
+var _kbIngestFiles = [];
+
+function kbOpenIngest() {
+  var panel = kbEl('kb-ingest-panel');
+  if (!panel) return;
+  panel.classList.remove('bl-hidden');
+  var input = kbEl('kb-ingest-input');
+  if (input) input.focus();
+  kbLoadIngestStats();
+}
+
+function kbCloseIngest() {
+  var panel = kbEl('kb-ingest-panel');
+  if (panel) panel.classList.add('bl-hidden');
+}
+
+function kbIngestPick(input) {
+  _kbIngestFiles = Array.prototype.slice.call(input && input.files ? input.files : []);
+  var label = kbEl('kb-ingest-files-label');
+  if (!label) return;
+  if (!_kbIngestFiles.length) { label.textContent = '未选择文件'; return; }
+  var names = _kbIngestFiles.map(function (file) { return file.name; });
+  label.textContent = '已选 ' + _kbIngestFiles.length + ' 个：' + names.slice(0, 3).join('、') +
+    (names.length > 3 ? '…' : '');
+}
+
+async function kbLoadIngestStats() {
+  var data = await safeFetch(API + '/kb/ingest/stats');
+  var hint = kbEl('kb-ingest-hint');
+  if (!data || !data.blob || !hint) return;
+  var doc = data.documents || {};
+  hint.textContent = '已投喂 ' + (doc.documents || 0) + ' 篇 · blob ' + (data.blob.blobs || 0) +
+    ' 个（COS 加密镜像 ' + (data.blob.mirrored || 0) + '，>10MB 主存 COS ' + (data.blob.on_cos || 0) + '）';
+}
+
+function kbRenderIngestResult(items) {
+  var box = kbEl('kb-ingest-result');
+  if (!box) return;
+  box.classList.remove('bl-hidden');
+  box.innerHTML = (items || []).map(function (item) {
+    var ok = !!item.ok;
+    var name = item.name || (item.document && item.document.title) || '';
+    var info = ok && item.extract
+      ? [item.extract.kind, item.extract.chars + ' 字', item.extract.transcript_chars ? '转写 ' + item.extract.transcript_chars + ' 字' : '', item.extract.notes]
+          .filter(Boolean).join(' · ')
+      : (item.error || '');
+    return '<div class="kb-clip-row ' + (ok ? 'is-ok' : 'is-bad') + '">' +
+      '<span class="kb-clip-badge">' + (ok ? '已入库' : '失败') + '</span>' +
+      '<div class="kb-clip-main"><div>' + esc(name) + '</div>' +
+      '<div class="kb-clip-url">' + esc(info) + '</div></div></div>';
+  }).join('');
+}
+
+async function kbSubmitIngest() {
+  if (_kbIngestBusy) return;
+  var textEl = kbEl('kb-ingest-input');
+  var titleEl = kbEl('kb-ingest-title');
+  var dateEl = kbEl('kb-ingest-date');
+  var tagsEl = kbEl('kb-ingest-tags');
+  var btn = kbEl('kb-ingest-submit');
+  var hint = kbEl('kb-ingest-hint');
+  var text = textEl ? textEl.value.trim() : '';
+  var title = titleEl ? titleEl.value.trim() : '';
+  var published = dateEl ? dateEl.value : '';
+  var tags = tagsEl
+    ? tagsEl.value.split(/[,，]/).map(function (v) { return v.trim(); }).filter(Boolean)
+    : [];
+  if (!_kbIngestFiles.length && !text) {
+    showToast('先选文件，或粘贴文本 / 链接', 'warning');
+    return;
+  }
+  _kbIngestBusy = true;
+  if (btn) { btn.disabled = true; btn.textContent = '入库中…'; }
+  if (hint) hint.textContent = '上传并解析中…（视频转写可能要几十秒）';
+  try {
+    var data;
+    if (_kbIngestFiles.length) {
+      var form = new FormData();
+      _kbIngestFiles.forEach(function (file) { form.append('files', file); });
+      form.append('title', title);
+      form.append('published_at', published);
+      form.append('tags', tags.join(','));
+      data = await safeFetch(API + '/kb/upload', { method: 'POST', body: form });
+    } else {
+      var payload = { text: text, title: title, published_at: published, tags: tags, source: 'paste' };
+      if (/^https?:\/\/\S+$/i.test(text)) {
+        payload.url = text;
+        payload.text = '';
+        payload.source = 'url';
+      }
+      data = await safeFetch(API + '/kb/ingest', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    }
+    if (!data) return;
+    var items = data.items || (data.document
+      ? [{ ok: true, name: data.document.title, document: data.document, extract: data.extract }]
+      : []);
+    kbRenderIngestResult(items);
+    var okCount = items.filter(function (item) { return item.ok; }).length;
+    if (okCount) {
+      showToast('已入库 ' + okCount + ' 篇', 'success');
+      if (textEl) textEl.value = '';
+      _kbIngestFiles = [];
+      var fileInput = kbEl('kb-ingest-files');
+      if (fileInput) fileInput.value = '';
+      var label = kbEl('kb-ingest-files-label');
+      if (label) label.textContent = '未选择文件';
+      if (typeof kbLoad === 'function') kbLoad(true);
+      if (typeof kbLoadTree === 'function') kbLoadTree(true);
+      kbLoadIngestStats();
+    } else {
+      showToast((items[0] && (items[0].error || items[0].extract && items[0].extract.notes)) || '没有入库成功', 'error', 4000);
+    }
+  } finally {
+    _kbIngestBusy = false;
+    if (btn) { btn.disabled = false; btn.textContent = '入库'; }
+    if (hint && !/已投喂/.test(hint.textContent || '')) {
+      hint.textContent = '超过 10MB 的文件会加密后主存 COS；视频转写需要几秒到几十秒';
+    }
+  }
+}
+
+// ---------- v1.0 P2：时间线 / 系列（导航不再按文件夹） ----------
+
+function kbIsoDate(d) {
+  var p = function (n) { return (n < 10 ? '0' : '') + n; };
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+
+function kbTimelineRange(key) {
+  var now = new Date();
+  var today = kbIsoDate(now);
+  if (key === 'today') return [today, today];
+  if (key === 'week') {
+    var d = new Date(now.getTime());
+    var shift = (d.getDay() + 6) % 7;
+    d.setDate(d.getDate() - shift);
+    return [kbIsoDate(d), today];
+  }
+  if (key === 'month') return [today.slice(0, 7) + '-01', today];
+  if (key === 'year') return [today.slice(0, 4) + '-01-01', today];
+  if (key === 'older') return ['', (Number(today.slice(0, 4)) - 1) + '-12-31'];
+  var m = /^(\d{4})-(\d{2})$/.exec(key || '');
+  if (m) {
+    var last = new Date(Number(m[1]), Number(m[2]), 0);
+    return [key + '-01', kbIsoDate(last)];
+  }
+  return ['', ''];
+}
+
+function kbSetTimeline(key) {
+  var range = kbTimelineRange(key || '');
+  var active = key !== 'all' && kbState.dateFrom === range[0] &&
+    kbState.dateTo === range[1] && !kbState.date;
+  kbState.date = '';
+  kbState.dateFrom = active ? '' : range[0];
+  kbState.dateTo = active ? '' : range[1];
+  kbState.offset = 0;
+  kbSyncDateInputs();
+  kbRenderTimeline();
+  if (typeof kbRenderFilterbar === 'function') kbRenderFilterbar();
+  kbLoad();
+  kbLoadTree();
+}
+
+function kbRenderTimeline() {
+  var box = kbEl('kb-timeline');
+  if (!box) return;
+  var tree = _kbTree || {};
+  var buckets = tree.timeline || [];
+  var months = (tree.months || []).slice(0, 8);
+  var html = '';
+  buckets.forEach(function (row) {
+    var range = kbTimelineRange(row.key);
+    var on = row.key === 'all'
+      ? (!kbState.dateFrom && !kbState.dateTo && !kbState.date)
+      : (kbState.dateFrom === range[0] && kbState.dateTo === range[1] && !kbState.date);
+    html += '<button type="button" class="kb-tl" data-tl="' + escAttr(row.key) + '" aria-pressed="' +
+      (on ? 'true' : 'false') + '" onclick="kbSetTimeline(this.dataset.tl)">' +
+      '<span class="kb-tl-name">' + esc(row.label) + '</span>' +
+      '<span class="kb-tl-n">' + row.count + '</span></button>';
+  });
+  if (months.length) {
+    html += '<div class="kb-months">';
+    months.forEach(function (row) {
+      var range = kbTimelineRange(row.key);
+      var on = kbState.dateFrom === range[0] && kbState.dateTo === range[1];
+      html += '<button type="button" class="kb-month" data-tl="' + escAttr(row.key) + '" aria-pressed="' +
+        (on ? 'true' : 'false') + '" title="' + escAttr(row.label + '（' + row.count + ' 篇）') + '" ' +
+        'onclick="kbSetTimeline(this.dataset.tl)">' + esc(row.label) + '</button>';
+    });
+    html += '</div>';
+  }
+  box.innerHTML = html;
+}
+
+function kbRenderSeries() {
+  var box = kbEl('kb-series-list');
+  var wrap = kbEl('kb-series-wrap');
+  if (!box) return;
+  var rows = (_kbTree || {}).series || [];
+  var agg = {};
+  rows.forEach(function (row) {
+    if (!row.name) return;
+    if (!agg[row.name]) agg[row.name] = { name: row.name, count: 0 };
+    agg[row.name].count += row.count || 0;
+  });
+  var list = Object.keys(agg).map(function (k) { return agg[k]; })
+    .sort(function (a, b) { return b.count - a.count; }).slice(0, 15);
+  if (wrap) wrap.classList.toggle('bl-hidden', !list.length);
+  var html = '<button type="button" class="kb-series" data-series="" aria-pressed="' +
+    (!kbState.series ? 'true' : 'false') + '" onclick="kbSetSeries(\'\')">全部系列</button>';
+  list.forEach(function (row) {
+    var on = kbState.series === row.name;
+    html += '<button type="button" class="kb-series" data-series="' + escAttr(row.name) + '" aria-pressed="' +
+      (on ? 'true' : 'false') + '" onclick="kbSetSeries(this.dataset.series)">' +
+      esc(row.name) + '<span class="kb-series-n">' + row.count + '</span></button>';
+  });
+  box.innerHTML = html;
+}
+
+/* ===== 模型设置（v1.0.1）：从 DSH 模型列表选 provider/model，选择记进索引库 ===== */
+
+var _kbAiCatalog = { providers: [], default: null };
+
+async function kbAiOpen() {
+  var panel = kbEl('kb-ai-panel');
+  if (!panel) return;
+  panel.classList.remove('bl-hidden');
+  await kbAiLoad();
+}
+
+function kbAiClose() {
+  var panel = kbEl('kb-ai-panel');
+  if (panel) panel.classList.add('bl-hidden');
+}
+
+function kbAiPaintStatus(data) {
+  var box = kbEl('kb-ai-status');
+  var btn = kbEl('kb-ai-btn');
+  if (!box) return;
+  var sel = data && data.selected;
+  var current = sel
+    ? sel.provider + '/' + sel.model
+    : (data && data.provider ? data.provider + '/' + data.model + '（DSH 默认）' : '未选择');
+  var ok = !!(data && data.available);
+  box.className = 'kb-ai-status ' + (ok ? 'is-ok' : 'is-bad');
+  box.textContent = (ok ? '可用：' : '不可用：') + current +
+    (data && data.reason && !ok ? ' · ' + data.reason : '');
+  if (btn) btn.classList.toggle('is-bad', !ok);
+}
+
+function kbAiFillProviders(selected) {
+  var box = kbEl('kb-ai-provider');
+  if (!box) return;
+  var providers = (_kbAiCatalog.providers || []);
+  var html = '<option value="">跟随 DSH 默认</option>';
+  providers.forEach(function (p) {
+    html += '<option value="' + escAttr(p.id) + '">' + esc(p.name || p.id) + '</option>';
+  });
+  box.innerHTML = html;
+  if (selected && providers.some(function (p) { return p.id === selected; })) box.value = selected;
+}
+
+function kbAiFillModels(providerId, selected) {
+  var box = kbEl('kb-ai-model');
+  if (!box) return;
+  var provider = (_kbAiCatalog.providers || []).filter(function (p) { return p.id === providerId; })[0];
+  var models = provider ? provider.models || [] : [];
+  var html = '';
+  models.forEach(function (m) {
+    html += '<option value="' + escAttr(m.id) + '">' + esc(m.name || m.id) + '</option>';
+  });
+  box.innerHTML = html || '<option value="">（先选 provider）</option>';
+  if (selected && models.some(function (m) { return m.id === selected; })) box.value = selected;
+  box.disabled = models.length === 0;
+}
+
+function kbAiPickProvider() {
+  var provider = (kbEl('kb-ai-provider') || {}).value || '';
+  kbAiFillModels(provider, '');
+}
+
+async function kbAiLoad() {
+  var data = await safeFetch(API + '/kb/ai');
+  if (!data || !data.ok) {
+    kbAiPaintStatus({ available: false, reason: data && data.error ? data.error : '读取失败' });
+    return;
+  }
+  _kbAiCatalog = { providers: data.providers || [], default: data.default || null };
+  var sel = data.selected || null;
+  var providerId = (sel && sel.provider) || (data.default && data.default.provider) || '';
+  kbAiFillProviders(providerId);
+  kbAiFillModels(providerId, (sel && sel.model) || (data.default && data.default.model) || '');
+  kbAiPaintStatus(data);
+}
+
+async function kbAiSave() {
+  var provider = (kbEl('kb-ai-provider') || {}).value || '';
+  var model = (kbEl('kb-ai-model') || {}).value || '';
+  if (!provider || !model) {
+    showToast('先选一个 provider 和 model', 'warning');
+    return;
+  }
+  var data = await safeFetch(API + '/kb/ai', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ provider: provider, model: model })
+  });
+  if (!data) return;
+  if (!data.ok) {
+    showToast(data.error || '保存失败', 'error', 4000);
+    return;
+  }
+  kbAiPaintStatus(data.status || {});
+  showToast('模型已记住：' + provider + '/' + model, 'success');
+}
+
+async function kbAiReset() {
+  var data = await safeFetch(API + '/kb/ai', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ provider: '', model: '' })
+  });
+  if (!data) return;
+  if (!data.ok) {
+    showToast(data.error || '重置失败', 'error', 4000);
+    return;
+  }
+  showToast('已回到 DSH 默认模型', 'success');
+  await kbAiLoad();
+}
+
+/** 页面加载时静默刷新一次可用性红点（失败不打扰用户）。 */
+async function kbAiSyncBadge() {
+  var data = await safeFetch(API + '/kb/ai');
+  if (!data || !data.ok) return;
+  _kbAiCatalog = { providers: data.providers || [], default: data.default || null };
+  kbAiPaintStatus(data);
 }

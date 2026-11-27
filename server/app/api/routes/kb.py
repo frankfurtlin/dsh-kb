@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 import logging
 
-from fastapi import APIRouter
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import APIRouter, File, Form, UploadFile
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from app import config
-from app.services import (kb_ai, kb_ask, kb_classify, kb_digest as kb_digest_service, kb_embed,
-                          kb_enrich, kb_public, kb_search as kb_search_service, kb_store)
+from app.services import (kb_ai, kb_ask, kb_blob, kb_classify, kb_clip, kb_digest as kb_digest_service,
+                          kb_embed, kb_enrich, kb_ingest as kb_ingest_service, kb_public,
+                          kb_search as kb_search_service, kb_store)
 
 logger = logging.getLogger("dsh-kb.routes")
 
@@ -127,6 +128,63 @@ def kb_embed_stats() -> dict:
 class KbAskBody(BaseModel):
     question: str = ""
     limit: int = 6
+
+
+class KbAiBody(BaseModel):
+    provider: str = ""
+    model: str = ""
+
+
+class KbClipBody(BaseModel):
+    text: str = ""
+
+
+@router.get("/kb/ai")
+def kb_ai_settings() -> dict:
+    """模型设置：可用模型目录 + 当前选择 + 可用性。"""
+    info = kb_ai.status(force=True)
+    catalog = kb_ai.catalog(force=True)
+    return {
+        "ok": True,
+        **info,
+        "providers": catalog.get("providers") or [],
+        "default": catalog.get("default"),
+    }
+
+
+@router.post("/kb/ai")
+def kb_ai_save(body: KbAiBody) -> dict:
+    """保存模型选择；provider/model 传空表示回到 DSH 默认模型。"""
+    provider = (body.provider or "").strip()
+    model = (body.model or "").strip()
+    if not provider or not model:
+        from app.services import kb_store as _store
+
+        _store.set_setting("ai_selection", "")
+        return {"ok": True, "selected": None, "status": kb_ai.status(force=True)}
+
+    catalog = kb_ai.catalog(force=True)
+    providers = {str(item.get("id")): item for item in catalog.get("providers") or []}
+    entry = providers.get(provider)
+    models = {str(item.get("id")) for item in (entry or {}).get("models") or []}
+    if entry is None or model not in models:
+        return {"ok": False, "error": f"模型不可用：{provider}/{model}"}
+
+    kb_ai.save_selection(provider, model)
+    return {
+        "ok": True,
+        "selected": {"provider": provider, "model": model},
+        "status": kb_ai.status(force=True),
+    }
+
+
+@router.post("/kb/clip")
+def kb_clip_text(body: KbClipBody) -> dict:
+    """剪藏：从粘贴的分享文本里提链接，抓正文存成知识库报告（带出处）。"""
+    text = (body.text or "").strip()
+    if not text:
+        return _error(400, "粘贴内容为空")
+    return kb_clip.clip_text(text[:20000])
 
 
 @router.post("/kb/ask")
@@ -329,3 +387,119 @@ def kb_set_public(body: KbPublicBody):
     except ValueError as exc:
         return _error(409, str(exc))
     return {"ok": True, **result, "url": kb_public.public_url(rel) if body.public else ""}
+
+
+# ---------- v0.9：投喂入口（DB-first，不写 reports/） ----------
+
+
+class KbIngestBody(BaseModel):
+    text: str = ""
+    url: str = ""
+    title: str = ""
+    published_at: str = ""
+    category: str = ""
+    series: str = ""
+    tags: list[str] = []
+    source: str = "paste"
+
+
+def _split_tags(raw: str) -> list[str]:
+    return [item.strip().lstrip("#") for item in (raw or "").replace("，", ",").split(",") if item.strip()]
+
+
+@router.post("/kb/ingest")
+def kb_ingest(body: KbIngestBody):
+    """投喂纯文本 / Markdown / 网页链接。"""
+    tags = [t for t in (body.tags or []) if t.strip()]
+    if (body.url or "").strip():
+        result = kb_ingest_service.ingest_url(
+            body.url.strip(),
+            title=body.title,
+            published_at=body.published_at,
+            category=body.category,
+            series=body.series,
+            tags=tags,
+            source=body.source or "url",
+        )
+    else:
+        result = kb_ingest_service.ingest_text(
+            body.text,
+            title=body.title,
+            published_at=body.published_at,
+            category=body.category,
+            series=body.series,
+            tags=tags,
+            source=body.source or "paste",
+        )
+    if not result.get("ok"):
+        return _error(400, result.get("error") or "投喂失败")
+    return result
+
+
+@router.post("/kb/upload")
+async def kb_upload(
+    files: list[UploadFile] = File(...),
+    title: str = Form(""),
+    published_at: str = Form(""),
+    category: str = Form(""),
+    series: str = Form(""),
+    tags: str = Form(""),
+    transcribe: bool = Form(True),
+):
+    """上传文件投喂（HTML/MD/PDF/Word/Excel/PPT/图片/音视频；单次最多 20 个）。"""
+    tag_list = _split_tags(tags)
+    results: list[dict] = []
+    for upload in files[:20]:
+        data = await upload.read()
+        result = kb_ingest_service.ingest_bytes(
+            data,
+            name=upload.filename or "",
+            mime=upload.content_type or "",
+            title=title,
+            published_at=published_at,
+            source="upload",
+            category=category,
+            series=series,
+            tags=tag_list,
+            transcribe=bool(transcribe),
+        )
+        results.append({"name": upload.filename or "", **result})
+    ok = sum(1 for item in results if item.get("ok"))
+    return {"ok": ok > 0, "imported": ok, "failed": len(results) - ok, "items": results}
+
+
+@router.get("/kb/doc/{uid}")
+def kb_doc(uid: str):
+    """按 uid 取一条 DB 型文档详情（与 /kb/report 返回同构）。"""
+    item = kb_store.get_document((uid or "").strip())
+    if item is None:
+        return _error(404, "文档不存在")
+    return {"item": item}
+
+
+@router.get("/kb/blob/{sha}")
+def kb_blob_file(sha: str, download: int = 0):
+    """按 sha 取 blob 原始字节（私有：走同一套 DSH 鉴权与代理）。"""
+    meta = kb_blob.meta((sha or "").strip())
+    if not meta:
+        return _error(404, "blob 不存在")
+    data = kb_blob.get(sha)
+    if data is None:
+        return _error(404, "blob 不可读（本地与 COS 都没有）")
+    mime = meta.get("mime") or "application/octet-stream"
+    inline_types = ("image/", "audio/", "video/", "application/pdf")
+    disposition = "attachment" if download or not mime.startswith(inline_types) else "inline"
+    headers = {
+        "Content-Disposition": f'{disposition}; filename="{meta.get("name") or sha[:12]}"',
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, max-age=3600",
+    }
+    if mime.startswith("text/html"):
+        # 原文可能是剪藏来的网页：沙箱化，禁脚本，避免在知识库同源里执行。
+        headers["Content-Security-Policy"] = "sandbox; script-src 'none'; object-src 'none'" 
+    return Response(content=data, media_type=mime, headers=headers)
+
+
+@router.get("/kb/ingest/stats")
+def kb_ingest_stats() -> dict:
+    return {"blob": kb_blob.stats(), "documents": kb_store.doc_stats()}

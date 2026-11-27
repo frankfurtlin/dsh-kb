@@ -350,6 +350,10 @@ def _write_index() -> None:
 
 def build_pending(limit: int = 1, force: bool = False) -> dict:
     """后台增量：为还没有文章（或 hash 变化）的候选补写，最多 limit 篇。"""
+    info = kb_ai.status()
+    if not info.get("available"):
+        return {"ok": False, "skipped": True, "reason": info.get("reason") or "模型不可用",
+                "generated": [], "failed": [], "skippedCount": 0}
     done, skipped, failed = [], 0, []
     for candidate in _candidates():
         if len(done) >= limit:
@@ -402,13 +406,14 @@ def article_detail(slug: str) -> dict | None:
 
 def lint() -> dict:
     stale, empty, missing = [], [], []
+    known_paths = kb_store.existing_paths()
     for article in kb_store.wiki_articles_live():
         detail = kb_store.wiki_article_detail(article["slug"]) or {}
         sources = detail.get("sources") or []
         if not sources:
             empty.append(article["slug"])
         for src in sources:
-            if not (Path(config.REPORTS_DIR) / src["path"]).exists():
+            if src["path"] not in known_paths:
                 missing.append({"slug": article["slug"], "path": src["path"]})
         candidate = _candidate(article["slug"])
         if not candidate:

@@ -47,6 +47,7 @@
         <h1>知识库</h1>
         <p id="kb-subtotal">个人报告与素材的检索台</p>
       </div>
+      <button type="button" class="kb-iconbtn" id="kb-ai-btn" onclick="kbAiOpen()" aria-label="模型设置" title="模型设置">⚙</button>
       <button type="button" class="kb-iconbtn" onclick="toggleTheme()" aria-label="切换主题" title="切换主题">◐</button>
     </div>
 
@@ -77,14 +78,26 @@
       </a>
     </nav>
 
-    <div class="kb-sec bl-hidden" id="kb-saved-wrap">
-      <div class="kb-sec-head">已保存</div>
-      <div class="kb-saved" id="kb-saved" role="group" aria-label="已保存筛选"></div>
+    <div class="kb-sec">
+      <div class="kb-sec-head">时间线</div>
+      <div class="kb-timeline" id="kb-timeline" role="group" aria-label="按时间线筛选"></div>
+      <details class="kb-range-wrap">
+        <summary class="kb-sec-note">自定义区间</summary>
+        <div class="kb-range" role="group" aria-label="自定义日期区间">
+          <label class="kb-range-row"><span>从</span>
+            <input type="date" id="kb-from" class="kb-date-input" aria-label="起始日期">
+          </label>
+          <label class="kb-range-row"><span>到</span>
+            <input type="date" id="kb-to" class="kb-date-input" aria-label="截止日期">
+          </label>
+          <button type="button" class="kb-range-go" onclick="kbApplyDateRange()" title="按区间筛选">应用区间</button>
+        </div>
+      </details>
     </div>
 
-    <div class="kb-sec">
-      <div class="kb-sec-head">分类</div>
-      <div class="kb-cats" id="kb-cats" role="group" aria-label="按分类筛选"></div>
+    <div class="kb-sec bl-hidden" id="kb-series-wrap">
+      <div class="kb-sec-head">系列</div>
+      <div class="kb-series-list" id="kb-series-list" role="group" aria-label="按系列筛选"></div>
     </div>
 
     <div class="kb-sec">
@@ -93,18 +106,17 @@
     </div>
 
     <div class="kb-sec">
-      <div class="kb-sec-head">时间</div>
-      <div class="kb-range" role="group" aria-label="自定义日期区间">
-        <label class="kb-range-row"><span>从</span>
-          <input type="date" id="kb-from" class="kb-date-input" aria-label="起始日期">
-        </label>
-        <label class="kb-range-row"><span>到</span>
-          <input type="date" id="kb-to" class="kb-date-input" aria-label="截止日期">
-        </label>
-        <button type="button" class="kb-range-go" onclick="kbApplyDateRange()" title="按区间筛选">应用区间</button>
+      <div class="kb-sec-head">保存视图
+        <button type="button" class="kb-sec-add" onclick="kbSaveFilter()" title="把当前筛选存成视图">＋</button>
       </div>
-      <div class="kb-dates" id="kb-dates" role="group" aria-label="按日期筛选"></div>
+      <div class="kb-saved" id="kb-saved" role="group" aria-label="保存视图"></div>
+      <div class="kb-saved-empty" id="kb-saved-empty">还没有保存的视图：设好筛选后点右上「＋」。</div>
     </div>
+
+    <details class="kb-sec kb-more">
+      <summary class="kb-sec-head">分类</summary>
+      <div class="kb-cats" id="kb-cats" role="group" aria-label="按分类筛选"></div>
+    </details>
 
     <div class="kb-side-foot">
       <button type="button" class="kb-linkbtn" id="kb-refresh" onclick="kbRefresh()" title="重新扫描 reports/">
@@ -147,10 +159,78 @@
               aria-pressed="false" onclick="kbToggleSelectMode()">选择</button>
       <button type="button" class="kb-btn kb-btn-quiet" id="kb-save-filter"
               onclick="kbSaveFilter()">保存筛选</button>
+      <button type="button" class="kb-btn kb-btn-quiet" id="kb-ingest-btn" onclick="kbOpenIngest()" title="上传文件 / 粘贴文本或链接，直接入库">投喂</button>
+      <button type="button" class="kb-btn kb-btn-quiet" id="kb-clip-btn" onclick="kbOpenClip()" title="粘贴分享链接，抓成知识库报告">剪藏</button>
       <button type="button" class="kb-btn kb-btn-quiet" id="kb-help-btn"
               onclick="kbShowShortcutHelp()" aria-label="键盘快捷键帮助" title="键盘快捷键（?）">?</button>
       <div class="kb-result" id="kb-result" aria-live="polite"></div>
     </header>
+
+<section class="kb-clip bl-hidden" id="kb-clip-panel" aria-label="剪藏">
+  <div class="kb-ask-head">
+    <span class="kb-ask-title">剪藏到知识库</span>
+    <span class="kb-ask-sub">粘贴带分享链接的文本，自动抓正文入库；支持微信公众号 / 小红书 / 知乎 / 普通网页</span>
+    <button type="button" class="kb-iconbtn" onclick="kbCloseClip()" aria-label="关闭剪藏">✕</button>
+  </div>
+  <textarea id="kb-clip-input" class="kb-ask-input kb-clip-input" rows="4"
+            placeholder="例：https://mp.weixin.qq.com/s/xxxx 这篇讲得不错，存一下&#10;可以直接粘转发语 + 链接，一次最多 5 条"></textarea>
+  <div class="kb-ask-foot">
+    <span class="kb-ask-hint" id="kb-clip-hint">来源地址、站点、抓取时间会写进报告顶部</span>
+    <button type="button" class="kb-btn kb-btn-primary" id="kb-clip-submit" onclick="kbSubmitClip()">提取到知识库</button>
+  </div>
+  <div class="kb-clip-result bl-hidden" id="kb-clip-result" aria-live="polite"></div>
+</section>
+
+<section class="kb-clip bl-hidden" id="kb-ingest-panel" aria-label="投喂">
+  <div class="kb-ask-head">
+    <span class="kb-ask-title">投喂到知识库</span>
+    <span class="kb-ask-sub">文件 / 文本 / 链接都行：HTML、MD、PDF、Word、Excel、PPT、图片、音视频（视频会本地转写并进检索）</span>
+    <button type="button" class="kb-iconbtn" onclick="kbCloseIngest()" aria-label="关闭投喂">✕</button>
+  </div>
+  <div class="kb-ingest-row">
+    <label class="kb-btn kb-btn-quiet kb-ingest-pick">
+      <input type="file" id="kb-ingest-files" multiple onchange="kbIngestPick(this)" class="bl-hidden">
+      选择文件
+    </label>
+    <span class="kb-ask-hint" id="kb-ingest-files-label">未选择文件</span>
+  </div>
+  <textarea id="kb-ingest-input" class="kb-ask-input kb-clip-input" rows="4"
+            placeholder="或者直接粘贴文本 / 网页链接（以 http 开头会当链接抓取；否则当 Markdown 存下）"></textarea>
+  <div class="kb-ingest-fields">
+    <input id="kb-ingest-title" class="kb-ask-input" placeholder="标题（可空，自动取）">
+    <input id="kb-ingest-date" class="kb-ask-input" type="date" title="发布时间（可空=今天）">
+    <input id="kb-ingest-tags" class="kb-ask-input" placeholder="标签，逗号分隔（可空）">
+  </div>
+  <div class="kb-ask-foot">
+    <span class="kb-ask-hint" id="kb-ingest-hint">超过 10MB 的文件会加密后主存 COS；视频转写需要几秒到几十秒</span>
+    <button type="button" class="kb-btn kb-btn-primary" id="kb-ingest-submit" onclick="kbSubmitIngest()">入库</button>
+  </div>
+  <div class="kb-clip-result bl-hidden" id="kb-ingest-result" aria-live="polite"></div>
+</section>
+
+<section class="kb-clip bl-hidden" id="kb-ai-panel" aria-label="模型设置">
+  <div class="kb-ask-head">
+    <span class="kb-ask-title">模型</span>
+    <span class="kb-ask-sub">从 DSH 的模型列表里选一个并记住；不可用时插件安静跳过 AI 任务，不重试、不刷日志</span>
+    <button type="button" class="kb-iconbtn" onclick="kbAiClose()" aria-label="关闭模型设置">✕</button>
+  </div>
+  <div class="kb-ai-row">
+    <label class="kb-ai-field">
+      <span>Provider</span>
+      <select id="kb-ai-provider" class="kb-ai-select" onchange="kbAiPickProvider()"></select>
+    </label>
+    <label class="kb-ai-field">
+      <span>Model</span>
+      <select id="kb-ai-model" class="kb-ai-select"></select>
+    </label>
+  </div>
+  <div class="kb-ai-status" id="kb-ai-status" aria-live="polite">读取中…</div>
+  <div class="kb-ask-foot">
+    <span class="kb-ask-hint" id="kb-ai-hint">选择会存进索引库；DSH 模型列表变了之后，失效的选择会显示「不可用」</span>
+    <button type="button" class="kb-btn kb-btn-quiet" onclick="kbAiReset()">用 DSH 默认</button>
+    <button type="button" class="kb-btn kb-btn-primary" id="kb-ai-save" onclick="kbAiSave()">保存</button>
+  </div>
+</section>
 
     <section class="kb-ask bl-hidden" id="kb-ask" aria-label="AI 问答">
       <div class="kb-ask-head">

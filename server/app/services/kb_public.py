@@ -24,7 +24,7 @@ import threading
 from urllib.parse import quote, unquote
 
 from app.config import REPORTS_DIR
-from app.services import kb_store, report_html
+from app.services import kb_blob, kb_store, report_html
 
 PUBLIC_PREFIX = "/kb-public"
 PUBLIC_REPORTS_PREFIX = f"{PUBLIC_PREFIX}/reports"
@@ -114,7 +114,10 @@ def resolve_ref(ref: str, base_dir: str) -> str | None:
 
 def _file_exists(rel: str) -> bool:
     path = report_html.safe_path(rel)
-    return path is not None and path.is_file()
+    if path is not None and path.is_file():
+        return True
+    # v1.0：附件已迁进内容寻址存储，按路径索引查表。
+    return kb_store.asset_exists(rel)
 
 
 def _scan_file(rel: str, depth: int, out: set[str]) -> None:
@@ -126,6 +129,11 @@ def _scan_file(rel: str, depth: int, out: set[str]) -> None:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return
+    _scan_text(rel, text, depth, out)
+
+
+def _scan_text(rel: str, text: str, depth: int, out: set[str]) -> None:
+    """从正文文本里收集附件（文件型与库内文档共用）。"""
     base_dir = posixpath.dirname(rel)
     refs: list[str] = []
     refs.extend(_REF_ATTR_RE.findall(text))
@@ -149,26 +157,50 @@ def _scan_file(rel: str, depth: int, out: set[str]) -> None:
 
 
 def _report_assets(rel: str) -> frozenset[str]:
-    """一篇公开报告允许匿名访问的附件集合（按文件状态缓存）。"""
+    """一篇公开报告允许匿名访问的附件集合（文件型按 mtime 缓存，库内文档按 blob sha 缓存）。"""
     path = report_html.safe_path(rel)
-    if path is None or not path.is_file():
+    if path is None:
         return frozenset()
-    try:
-        stat = path.stat()
-    except OSError:
-        return frozenset()
-    key = (rel, stat.st_mtime_ns, stat.st_size)
+
+    text: str | None = None
+    key: tuple = ()
+    if path.is_file():
+        try:
+            stat = path.stat()
+        except OSError:
+            return frozenset()
+        key = (rel, stat.st_mtime_ns, stat.st_size)
+        cache_key = key
+    else:
+        # v1.0：报告已迁进索引库，正文在私有 blob 里。
+        doc = kb_store.get_report(rel)
+        sha = (doc or {}).get("blob_sha") or ""
+        if not sha:
+            return frozenset()
+        cache_key = (rel, sha, 0)
+        try:
+            text = kb_blob.get(sha).decode("utf-8", errors="replace")
+        except Exception:  # noqa: BLE001 - 取不到就当没有附件
+            return frozenset()
+
     with _CACHE_LOCK:
-        cached = _ASSET_CACHE.get(key)
+        cached = _ASSET_CACHE.get(cache_key)
     if cached is not None:
         return cached
 
     assets: set[str] = set()
-    _scan_file(rel, 0, assets)
+    if text is not None:
+        _scan_text(rel, text, 0, assets)
+    else:
+        _scan_file(rel, 0, assets)
 
     stem = posixpath.splitext(posixpath.basename(rel))[0]
     report_dir = posixpath.dirname(rel)
     for candidate_dir in (posixpath.join(report_dir, "images", stem), posixpath.join(report_dir, stem)):
+        for row in kb_store.list_assets(candidate_dir):
+            assets.add(row["path"])
+            if len(assets) >= _REF_MAX_FILES:
+                break
         target = report_html.safe_path(candidate_dir)
         if target is not None and target.is_dir():
             for child in target.rglob("*"):
@@ -183,6 +215,15 @@ def _report_assets(rel: str) -> frozenset[str]:
                     break
 
     # 同目录的非 HTML 直接兄弟文件（data.js、配图等）。
+    for row in kb_store.list_assets(report_dir):
+        rel_path = row["path"]
+        if posixpath.dirname(rel_path) != report_dir:
+            continue
+        if rel_path.lower().endswith((".html", ".htm")):
+            continue
+        assets.add(rel_path)
+        if len(assets) >= _REF_MAX_FILES:
+            break
     siblings = report_html.safe_path(report_dir)
     if siblings is not None and siblings.is_dir():
         for child in siblings.iterdir():
@@ -201,7 +242,7 @@ def _report_assets(rel: str) -> frozenset[str]:
     with _CACHE_LOCK:
         if len(_ASSET_CACHE) > 512:
             _ASSET_CACHE.clear()
-        _ASSET_CACHE[key] = frozen
+        _ASSET_CACHE[cache_key] = frozen
     return frozen
 
 

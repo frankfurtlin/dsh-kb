@@ -1212,3 +1212,49 @@ button.kb-tag:hover { text-decoration: underline; }
 .kb-ask-brief ul { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
 .kb-ask-brief li { display: block; font-size: 12.5px; color: var(--kb-text-2); }
 .kb-brief-sum { display: block; margin-top: 2px; color: var(--kb-text-3); line-height: 1.5; }
+
+/* ===== 剪藏（粘贴分享链接 → 知识库报告） ===== */
+.kb-clip { margin: 12px 0 16px; padding: 14px 16px; border: 1px solid var(--kb-line, #d8dee4); border-radius: 12px; background: var(--kb-panel, #fff); }
+.kb-clip-input { width: 100%; resize: vertical; min-height: 92px; }
+.kb-clip-result { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.kb-clip-row { display: flex; gap: 10px; align-items: flex-start; padding: 9px 11px; border-radius: 9px; font-size: 13px; line-height: 1.6; background: var(--kb-soft, #f6f8fa); }
+.kb-clip-row.is-ok { background: rgba(45, 164, 78, 0.1); }
+.kb-clip-row.is-bad { background: rgba(207, 34, 46, 0.1); }
+.kb-clip-badge { flex: none; font-weight: 600; }
+.kb-clip-main { min-width: 0; }
+.kb-clip-main a { color: inherit; }
+.kb-clip-url { color: #8b949e; font-size: 12px; word-break: break-all; }
+
+/* v0.9 投喂面板 */
+.kb-ingest-row{display:flex;align-items:center;gap:10px;margin:8px 0 10px;flex-wrap:wrap}
+.kb-ingest-pick{cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.kb-ingest-fields{display:grid;grid-template-columns:2fr 1fr 2fr;gap:8px;margin-top:8px}
+.kb-ingest-fields .kb-ask-input{width:100%;box-sizing:border-box}
+@media (max-width:640px){.kb-ingest-fields{grid-template-columns:1fr}}
+
+/* v1.0 P2：时间线 / 系列 / 保存视图 */
+.kb-sec-head{display:flex;align-items:center;gap:6px}
+.kb-timeline{display:flex;flex-direction:column;gap:2px}
+.kb-tl{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 8px;border:0;border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:13px;cursor:pointer;text-align:left;width:100%}
+.kb-tl:hover{background:color-mix(in srgb, currentColor 7%, transparent)}
+.kb-tl[aria-pressed="true"]{background:color-mix(in srgb, currentColor 12%, transparent);font-weight:600}
+.kb-tl-n{color:color-mix(in srgb, currentColor 55%, transparent);font-variant-numeric:tabular-nums;font-size:12px}
+.kb-months{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.kb-month{font-size:11.5px;padding:2px 7px;border-radius:999px;border:1px solid color-mix(in srgb, currentColor 18%, transparent);background:transparent;color:inherit;cursor:pointer}
+.kb-month[aria-pressed="true"]{background:color-mix(in srgb, currentColor 14%, transparent);font-weight:600}
+.kb-sec-add{margin-left:auto;border:0;background:transparent;color:inherit;cursor:pointer;font-size:15px;line-height:1;padding:0 2px}
+.kb-saved-empty{font-size:11.5px;color:color-mix(in srgb, currentColor 55%, transparent);padding:2px 2px 0;line-height:1.5}
+.kb-range-wrap>summary{cursor:pointer;list-style:none;color:color-mix(in srgb, currentColor 55%, transparent);font-size:12px}
+.kb-range-wrap[open] .kb-range{margin-top:8px}
+.kb-more>summary{cursor:pointer;list-style:none}
+.kb-more>summary::-webkit-details-marker{display:none}
+
+/* v1.0.1：模型设置 */
+.kb-ai-row{display:flex;gap:14px;flex-wrap:wrap;padding:4px 18px 0}
+.kb-ai-field{display:flex;flex-direction:column;gap:6px;font-size:12px;color:color-mix(in srgb, currentColor 60%, transparent);min-width:220px;flex:1}
+.kb-ai-select{padding:8px 10px;border-radius:8px;border:1px solid color-mix(in srgb, currentColor 22%, transparent);background:transparent;color:inherit;font:inherit;font-size:13px}
+.kb-ai-status{margin:12px 18px 0;font-size:12.5px;line-height:1.6;padding:9px 12px;border-radius:8px;background:color-mix(in srgb, currentColor 6%, transparent)}
+.kb-ai-status.is-bad{background:color-mix(in srgb, #c0392b 12%, transparent);color:#b03a2e}
+.kb-ai-status.is-ok{background:color-mix(in srgb, #1a7f37 10%, transparent)}
+#kb-ai-btn{position:relative}
+#kb-ai-btn.is-bad::after{content:"";position:absolute;right:5px;top:5px;width:6px;height:6px;border-radius:50%;background:#d64545}

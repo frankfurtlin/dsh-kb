@@ -10,3 +10,15 @@ httpx==0.28.1
 numpy==2.4.6
 fastembed==0.9.1
 onnxruntime==1.31.1
+
+# v1.0 投喂链路（2026-11-25）
+cryptography==50.0.2
+python-multipart==0.0.34
+cos-python-sdk-v5==1.9.45
+python-docx==1.2.0
+openpyxl==3.1.5
+python-pptx==1.0.2
+pillow==13.0.0
+requests==2.34.2
+# 本地语音转写（SenseVoice ONNX 模型在 ~/.dsh/speech-to-text/sensevoice/）
+sherpa-onnx==2.0.3

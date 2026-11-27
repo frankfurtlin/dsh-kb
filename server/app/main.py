@@ -38,6 +38,7 @@ from app.api.routes import reports as report_routes
 from app.config import ROUTE_PREFIX, STATIC_DIR
 from app.services import (
     kb_ai,
+    kb_blob,
     kb_classify,
     kb_embed,
     kb_enrich,
@@ -53,6 +54,8 @@ logger = logging.getLogger("dsh-kb")
 def _enrich_worker(stop_event: threading.Event) -> None:
     """低频后台补全 AI sidecar：每轮取一小批 pending，失败自动记录并跳过。"""
     while not stop_event.wait(config.AI_INTERVAL):
+        if not kb_ai.guard():
+            continue
         try:
             result = kb_enrich.enrich_pending(limit=config.AI_BATCH)
             if result.get("enriched") or result.get("failed"):
@@ -69,6 +72,8 @@ def _enrich_worker(stop_event: threading.Event) -> None:
 def _classify_worker(stop_event: threading.Event) -> None:
     """低频后台补分类：每轮取一小批 pending，失败记录后跳过，下一轮重试。"""
     while not stop_event.wait(config.CLASSIFY_INTERVAL):
+        if not kb_ai.guard():
+            continue
         try:
             result = kb_classify.classify_pending(limit=config.CLASSIFY_BATCH)
             if result.get("ok") and (result.get("classified") or result.get("failed")):
@@ -85,6 +90,8 @@ def _classify_worker(stop_event: threading.Event) -> None:
 def _wiki_worker(stop_event: threading.Event) -> None:
     """低频后台补写 LLM Wiki 文章：每轮最多 WIKI_BATCH 篇，hash 命中跳过。"""
     while not stop_event.wait(config.WIKI_INTERVAL):
+        if not kb_ai.guard():
+            continue
         try:
             result = kb_wiki.build_pending(limit=config.WIKI_BATCH)
             generated = result.get("generated") or []
@@ -176,9 +183,14 @@ async def lifespan(_app: FastAPI):
         workers.append(embedder)
     else:
         logger.warning("向量索引未启用或不可用：%s", kb_embed.status().get("error") or "disabled")
+    # v0.9：私有 blob 的 COS 加密镜像后台补传（失败不阻塞投喂）。
+    kb_blob.start_worker()
+    logger.info("blob 镜像线程已启动（阈值 %.0f MB，COS %s）",
+                kb_blob.COS_THRESHOLD / 1048576, "可用" if kb_blob.cos_ready() else "未配置")
     try:
         yield
     finally:
+        kb_blob.stop_worker()
         stop_event.set()
         for worker in workers:
             worker.join(timeout=3)
