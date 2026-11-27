@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>知识库架构 · dsh-kb v1.0</title>
+<style>
+  :root{
+    --paper:#f6f3ec; --card:#fffdf8; --ink:#23241f; --muted:#797569;
+    --rule:rgba(35,36,31,.14); --rule-strong:rgba(35,36,31,.3);
+    --accent:#4b4fe0; --accent-soft:rgba(75,79,224,.08);
+    --amber:#a9702a; --amber-soft:rgba(169,112,42,.09);
+    --mono:ui-monospace,SFMono-Regular,"JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Noto Sans SC","PingFang SC","Hiragino Sans GB",sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --paper:#151612; --card:#1d1e18; --ink:#ece9df; --muted:#9c988b;
+      --rule:rgba(236,233,223,.16); --rule-strong:rgba(236,233,223,.32);
+      --accent:#9193ff; --accent-soft:rgba(145,147,255,.1);
+      --amber:#d8a45c; --amber-soft:rgba(216,164,92,.1);
+    }
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
+       font-size:15px;line-height:1.65;letter-spacing:.01em;
+       -webkit-font-smoothing:antialiased}
+  .page{max-width:1120px;margin:0 auto;padding:72px 48px 96px}
+  .kicker{font:500 11px/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+  .masthead h1{margin:20px 0 22px;font-size:min(52px,6.4vw);line-height:1.12;font-weight:650;
+               letter-spacing:-.02em}
+  .lede{max-width:64ch;color:var(--muted);font-size:16px;line-height:1.75;margin:0}
+  .masthead{border-bottom:1px solid var(--rule-strong);padding-bottom:40px}
+  .legend{display:flex;flex-wrap:wrap;gap:22px;margin-top:28px;font:400 11.5px/1 var(--mono);
+          letter-spacing:.04em;color:var(--muted)}
+  .legend i{display:inline-block;width:26px;height:0;border-top:1.5px solid var(--accent);
+            vertical-align:middle;margin-right:8px}
+  .legend .dash i{border-top-style:dashed;border-color:var(--rule-strong)}
+  .legend .amber i{border-color:var(--amber)}
+
+  /* layers */
+  .layer{display:grid;grid-template-columns:84px 1fr;gap:28px;padding:34px 0 0}
+  .rail{padding-top:2px}
+  .rail-num{display:block;font:500 12px/1 var(--mono);color:var(--muted);letter-spacing:.1em}
+  .rail-name{display:block;font-size:17px;font-weight:620;margin-top:9px;letter-spacing:.02em}
+  .rail-en{display:block;font:400 10px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;
+           color:var(--muted);margin-top:7px}
+
+  .cards{display:grid;gap:14px}
+  .cards-4{grid-template-columns:repeat(4,1fr)}
+  .cards-3{grid-template-columns:repeat(3,1fr)}
+  .card{background:var(--card);border:1px solid var(--rule);border-radius:10px;padding:18px 18px 16px;
+        box-shadow:0 1px 0 rgba(0,0,0,.02);position:relative}
+  .card::before{content:"";position:absolute;left:18px;top:0;width:26px;height:2px;background:var(--accent);
+                border-radius:0 0 2px 2px;opacity:.85}
+  .card .k{font:500 10.5px/1.4 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
+           display:block;margin-bottom:9px}
+  .card h3{margin:0 0 8px;font-size:15.5px;font-weight:640;letter-spacing:.01em;line-height:1.4}
+  .card p{margin:0;font-size:12.5px;line-height:1.62;color:var(--muted)}
+  .card p+p{margin-top:5px}
+  .card .path{font:400 11px/1.55 var(--mono);letter-spacing:.01em;color:var(--muted);
+              margin-top:9px;word-break:normal;overflow-wrap:break-word}
+  code{font:400 12px/1.5 var(--mono);background:var(--accent-soft);color:var(--ink);
+       padding:1px 5px;border-radius:4px;white-space:nowrap}
+  .card.legacy{border-style:dashed;border-color:var(--rule)}
+  .card.legacy::before{background:var(--rule-strong)}
+  .card.legacy h3{color:var(--muted);font-weight:580}
+  .card.amber::before{background:var(--amber)}
+
+  /* wide ingest card */
+  .board{background:var(--card);border:1px solid var(--rule);border-radius:12px;padding:20px;
+         display:grid;grid-template-columns:repeat(3,1fr);gap:26px}
+  .board .col h4{margin:0 0 8px;font:500 10.5px/1 var(--mono);letter-spacing:.12em;
+                 text-transform:uppercase;color:var(--muted)}
+  .board .col p{margin:0 0 7px;font-size:12.5px;line-height:1.62;color:var(--muted)}
+  .board .col p:last-child{margin-bottom:0}
+  .board .col b{color:var(--ink);font-weight:600}
+  .chips{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .chip{border:1px solid var(--rule);border-radius:8px;padding:13px 14px;background:var(--card)}
+  .chip h4{margin:0 0 6px;font-size:13.5px;font-weight:620;letter-spacing:.01em}
+  .chip p{margin:0;font-size:12px;line-height:1.55;color:var(--muted)}
+
+  /* connector */
+  .wire{display:grid;grid-template-columns:84px 1fr;gap:28px;height:44px;align-items:center}
+  .wire .line{justify-self:start;margin-left:42px;width:1px;height:44px;background:var(--rule-strong);
+              position:relative}
+  .wire .line::after{content:"";position:absolute;left:-3px;bottom:-1px;width:7px;height:7px;
+                     border-right:1.4px solid var(--rule-strong);border-bottom:1.4px solid var(--rule-strong);
+                     transform:rotate(45deg)}
+  .wire span{font:400 11px/1 var(--mono);letter-spacing:.04em;color:var(--muted)}
+
+  .foot{margin-top:48px;border-top:1px solid var(--rule-strong);padding-top:26px;
+        display:grid;grid-template-columns:1.2fr 1fr;gap:36px}
+  .foot h4{margin:0 0 10px;font:500 10.5px/1 var(--mono);letter-spacing:.12em;
+           text-transform:uppercase;color:var(--muted)}
+  .foot p{margin:0;font-size:13px;line-height:1.7;color:var(--muted);max-width:52ch}
+  .stats{display:flex;flex-wrap:wrap;gap:10px;align-content:start}
+  .stat{border:1px solid var(--rule);border-radius:8px;padding:10px 13px;background:var(--card);
+        font:400 11.5px/1.3 var(--mono);color:var(--muted)}
+  .stat b{display:block;font:600 18px/1.2 var(--sans);color:var(--ink);letter-spacing:-.01em;margin-bottom:3px}
+  @media (max-width:900px){
+    .page{padding:48px 22px 64px}
+    .layer,.wire{grid-template-columns:1fr;gap:14px}
+    .rail{display:flex;align-items:baseline;gap:12px}
+    .rail-name{margin-top:0}
+    .wire{height:auto}
+    .wire .line{display:none}
+    .cards-4,.cards-3,.chips{grid-template-columns:1fr 1fr}
+    .board{grid-template-columns:1fr}
+    .foot{grid-template-columns:1fr}
+  }
+  @media print{body{background:#fff}.page{max-width:none;padding:24px}}
+</style>
+</head>
+<body>
+<main class="page">
+
+  <header class="masthead">
+    <div class="kicker">dsh-kb · architecture · 2026-11-25</div>
+    <h1>内容进来之后，<br>去了哪里</h1>
+    <p class="lede">一条从「投喂」到「检索与展示」的链路。写入端只交 HTML 和元数据；摄取层负责抽取、去重、定发布时间；存储层只认 sha256，不再按日期文件夹组织；读取层用时间线、系列、标签和全文检索重新组织内容。</p>
+    <div class="legend">
+      <span><i></i>主链路</span>
+      <span class="amber"><i></i>加密 / 外部存储</span>
+      <span class="dash"><i></i>遗留数据</span>
+    </div>
+  </header>
+
+  <!-- 01 写入 -->
+  <section class="layer">
+    <div class="rail">
+      <span class="rail-num">01</span>
+      <span class="rail-name">写入</span>
+      <span class="rail-en">producers</span>
+    </div>
+    <div class="cards cards-4">
+      <article class="card">
+        <span class="k">每日 · 15:10</span>
+        <h3>全市场分析报告</h3>
+        <p>Hermes cron 触发；脚本投喂入库后不再落文件。</p>
+        <p class="path">run_market_report.sh → kb_publish.py</p>
+        <p>投喂失败直接报错退出，不落文件。</p>
+      </article>
+      <article class="card">
+        <span class="k">每周六 · 09:01</span>
+        <h3>周度推送 digest</h3>
+        <p>systemd timer 触发，同一个投喂脚本。</p>
+        <p class="path">digest/run.sh → kb_publish.py</p>
+        <p>抓上游更新 → 出稿 → 入库。</p>
+      </article>
+      <article class="card">
+        <span class="k">随时</span>
+        <h3>手动投喂</h3>
+        <p>知识库面板里的「投喂」：多选文件、粘贴文本、贴链接。</p>
+        <p>支持 Word / Excel / PPT / PDF / 音视频。</p>
+      </article>
+      <article class="card">
+        <span class="k">随时</span>
+        <h3>剪藏 clip</h3>
+        <p>粘贴分享链接，抓正文直接投喂；同一条链接再剪是更新，不堆副本。</p>
+        <p class="path">source_url 唯一键</p>
+      </article>
+    </div>
+  </section>
+
+  <div class="wire"><div class="line"></div><span>kb_publish.py → POST /api/kb/ingest · JSON 或 multipart</span></div>
+
+  <!-- 02 摄取 -->
+  <section class="layer">
+    <div class="rail">
+      <span class="rail-num">02</span>
+      <span class="rail-name">摄取</span>
+      <span class="rail-en">ingest</span>
+    </div>
+    <div class="board">
+      <div class="col">
+        <h4>接口 · FastAPI 127.0.0.1:8816</h4>
+        <p><b>POST /api/kb/ingest</b><br>文本、链接、HTML</p>
+        <p><b>POST /api/kb/upload</b><br>多文件 multipart，单请求 ≤ 20 个</p>
+        <p><b>GET /api/kb/doc/:uid</b><br>读回一条文档</p>
+      </div>
+      <div class="col">
+        <h4>抽取 kb_extract</h4>
+        <p>html · md · txt · pdf · docx · xlsx · pptx · 图片 · 音视频</p>
+        <p>PDF / Office 走 <b>LibreOffice</b> 取首屏；音视频走本地 <b>SenseVoice</b> 转写，无音轨自动跳过。</p>
+      </div>
+      <div class="col">
+        <h4>归一化 kb_ingest</h4>
+        <p><b>sha1 去重</b>：同一份内容只留一条</p>
+        <p><b>发布时间</b>：文件名日期 &gt; 标题日期 &gt; 目录名</p>
+        <p>产出：标题、正文、标签、缩略图、mime、来源</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="wire"><div class="line"></div><span>sha256 内容寻址</span></div>
+
+  <!-- 03 存储 -->
+  <section class="layer">
+    <div class="rail">
+      <span class="rail-num">03</span>
+      <span class="rail-name">存储</span>
+      <span class="rail-en">storage</span>
+    </div>
+    <div class="cards cards-4">
+      <article class="card">
+        <span class="k">sqlite · 6.6 MB</span>
+        <h3>索引库</h3>
+        <p>文档行、blob 清单、附件索引、标签、变更轨迹。</p>
+        <p class="path">reports · blob · asset · tags · events</p>
+        <p>外加 wiki 页、图谱边、编译任务。</p>
+      </article>
+      <article class="card amber">
+        <span class="k">本地 · 129 MB</span>
+        <h3>私有 blob</h3>
+        <p>AES-256-GCM，AAD 绑定 sha；报告与附件同库（445 个 blob）。</p>
+        <p class="path">data/blobs/&lt;sha256&gt;</p>
+      </article>
+      <article class="card amber">
+        <span class="k">cos · 加密镜像</span>
+        <h3>对象存储</h3>
+        <p>&gt;10 MB 主存 COS，本地不留原件；小文件后台加密镜像。</p>
+        <p class="path">agent-1258181381 / kb-private/blobs/….enc</p>
+      </article>
+      <article class="card legacy">
+        <span class="k">legacy · 空目录</span>
+        <h3>reports/ 目录</h3>
+        <p>空目录：只作为扫描根与路径校验边界。</p>
+        <p class="path">server/data/reports/</p>
+        <p>0 个文件；原 326 个附件与 130 篇报告已入库。</p>
+      </article>
+    </div>
+  </section>
+
+  <div class="wire"><div class="line"></div><span>SQL 查询 + blob 读取</span></div>
+
+  <!-- 04 读取 -->
+  <section class="layer">
+    <div class="rail">
+      <span class="rail-num">04</span>
+      <span class="rail-name">读取</span>
+      <span class="rail-en">serve</span>
+    </div>
+    <div class="chips">
+      <div class="chip">
+        <h4>列表 + 检索</h4>
+        <p>混合检索：FTS 关键词 + 向量 + 重排；分页、排序、筛选。</p>
+      </div>
+      <div class="chip">
+        <h4>导航树</h4>
+        <p>时间线（今天 / 本周 / 本月 / 今年 / 更早 + 月份）· 系列 · 标签 · 保存视图。</p>
+      </div>
+      <div class="chip">
+        <h4>文档页</h4>
+        <p><code>/kb/doc/&lt;uid&gt;</code>：沙箱 iframe 渲染 blob 原文，CSP 禁脚本。</p>
+      </div>
+      <div class="chip">
+        <h4>AI 层</h4>
+        <p>问答、知识图谱（119 页）、LLM Wiki、周度摘要。</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="wire"><div class="line"></div><span>HTTP · DSH 反代 / Caddy</span></div>
+
+  <!-- 05 出口 -->
+  <section class="layer">
+    <div class="rail">
+      <span class="rail-num">05</span>
+      <span class="rail-name">出口</span>
+      <span class="rail-en">surfaces</span>
+    </div>
+    <div class="cards cards-4">
+      <article class="card">
+        <span class="k">/kb/*</span>
+        <h3>DSH 侧边栏</h3>
+        <p>知识库面板：列表、导航、投喂、AI 问答。</p>
+        <p>鉴权在 DSH 反代层。</p>
+      </article>
+      <article class="card">
+        <span class="k">agent tools</span>
+        <h3>DSH agent 工具</h3>
+        <p><code>kb_search</code> · <code>kb_get</code> · <code>kb_ask</code>，给 agent 直接查库。</p>
+      </article>
+      <article class="card">
+        <span class="k">/kb-public/*</span>
+        <h3>公开站</h3>
+        <p>Caddy + EdgeOne，只出 4 篇标记公开的报告。</p>
+      </article>
+      <article class="card">
+        <span class="k">qq · feishu</span>
+        <h3>投递</h3>
+        <p>cron 的 stdout 直接推 QQ / 飞书；报告本体留库里。</p>
+      </article>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <div>
+      <h4>为什么不再按文件夹组织</h4>
+      <p>目录只说明「它是哪天、由谁写的」，不该决定「我找的时候按什么翻」。2026-11-25 起，文件不再是主存储：内容进索引库和私有 blob，日期、系列、标签、分类都是字段，导航由查询重建。reports/ 已是空目录，326 个附件与 130 篇报告全部在内容寻址存储里。</p>
+    </div>
+    <div>
+      <h4>当前体量</h4>
+      <div class="stats">
+        <div class="stat"><b>130</b>篇全部为库内文档</div>
+        <div class="stat"><b>445</b>私有 blob · 129 MB</div>
+        <div class="stat"><b>326</b>附件 · 605 标签</div>
+        <div class="stat"><b>131</b>项测试通过</div>
+      </div>
+    </div>
+  </footer>
+
+</main>
+</body>
+</html>
