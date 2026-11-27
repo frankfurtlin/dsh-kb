@@ -1,0 +1,64 @@
+# dsh-kb backend — systemd unit template.
+#
+# This file is a TEMPLATE, not an installed unit: systemd only ever loads files
+# with an exact ".service" suffix from its own unit directories, so a
+# "*.service.example" left inside a checkout is never started by accident. Copy
+# it under the name "dsh-kb.service" to install it (command at the bottom).
+#
+# Fields you MUST change before copying:
+#   /opt/dsh/dsh-kb   the path of your checkout. It is only an example here and
+#                     appears in WorkingDirectory, EnvironmentFile and ExecStart.
+#                     Replace all three with the directory you cloned this repo to.
+#
+# Fields you may want to change:
+#   KB_DATA_DIR / KB_REPORTS_DIR   Where the index and the report scan root live.
+#                     Both are commented out on purpose: the code defaults to
+#                     <checkout>/server/data and <checkout>/server/data/reports,
+#                     which keeps all writable data inside the checkout. Uncomment
+#                     and point them elsewhere (e.g. /opt/dsh/data/kb) if you keep
+#                     data on a separate volume. The old v0.x layout pointed
+#                     KB_REPORTS_DIR at an external report folder; that is no
+#                     longer required.
+#   User= / Group=    This install runs as root, which is what the author tests on.
+#                     For a production host create a dedicated account instead,
+#                     e.g. User=dsh-kb / Group=dsh-kb, then
+#                     `chown -R dsh-kb:dsh-kb /opt/dsh/dsh-kb` (or just the data
+#                     dir) so the service can write kb.sqlite and server/data.
+#   --port 8816       The host half of the plugin proxies /kb/* to 127.0.0.1:8816.
+#                     Keep it on loopback; only change the port together with
+#                     DSH_KB_UPSTREAM_PORT on the host.
+#
+# Prerequisites (see the README "Install" section):
+#   git clone <repo> /opt/dsh/dsh-kb
+#   /usr/bin/python3.11 -m venv /opt/dsh/dsh-kb/.venv
+#   /opt/dsh/dsh-kb/.venv/bin/pip install -r /opt/dsh/dsh-kb/server/requirements.txt
+#   /opt/dsh/dsh-kb/server/.env.local   (optional, chmod 600; AI stays off without it)
+#
+# Install:
+#   sudo cp deploy/systemd/dsh-kb.service.example /etc/systemd/system/dsh-kb.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now dsh-kb
+#   systemctl status dsh-kb --no-pager
+#   curl -s http://127.0.0.1:8816/healthz
+
+[Unit]
+Description=Knowledge Base web app (embedded in dsh-kb plugin)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/dsh/dsh-kb/server
+Environment=PYTHONUNBUFFERED=1
+# Secrets (model-bridge overrides, AI batch tuning). The leading "-" makes the file
+# optional, so the unit starts on a fresh clone and AI features simply stay off.
+EnvironmentFile=-/opt/dsh/dsh-kb/server/.env.local
+# Optional data locations; defaults are <checkout>/server/data{,/reports}.
+#Environment=KB_DATA_DIR=/opt/dsh/data/kb
+#Environment=KB_REPORTS_DIR=/opt/dsh/data/kb/reports
+ExecStart=/opt/dsh/dsh-kb/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8816
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

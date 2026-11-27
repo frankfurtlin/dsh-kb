@@ -30,12 +30,23 @@ dsh-kb 是 DSH 的知识库插件：侧栏常驻「知识库」一行，主面�
 
 ## 安装
 
-```bash
-# 后端（独立 systemd 服务、插件内 venv；完整单元见「安装」章节）
-cd /root/workspace/plugins/dsh-kb/server
-../.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8816
+本文的示例把 checkout 装在 `/opt/dsh/dsh-kb`；这只是示例路径，换成你自己的目录，命令里的
+路径与单元文件里的路径要一起改。
 
-# DSH 侧挂载：plugin_manager action=install_bundle target=/root/workspace/plugins/dsh-kb
+```bash
+sudo git clone https://github.com/frankfurtlin/dsh-kb /opt/dsh/dsh-kb
+cd /opt/dsh/dsh-kb
+
+# 后端（独立 systemd 服务、插件内 venv）
+/usr/bin/python3.11 -m venv .venv
+.venv/bin/pip install -r server/requirements.txt
+
+sudo cp deploy/systemd/dsh-kb.service.example /etc/systemd/system/dsh-kb.service
+sudo systemctl daemon-reload && sudo systemctl enable --now dsh-kb
+curl -s http://127.0.0.1:8816/healthz
+
+# DSH 侧挂载：dsh plugin --profile web add <你的 checkout 路径>
+#              等价：plugin_manager action=install_bundle target=<你的 checkout 路径>
 ```
 
 ## 详细文档
@@ -424,31 +435,29 @@ verification/shots/           验收截图
 
 后端是独立 systemd 服务，用**插件内的 venv** `.venv`（系统 python3.11 + fastembed/onnxruntime；
 为避免沙箱写权限问题，embeddings 的模型与 HF 缓存都放 `server/data/` 下）。密钥只进
-`server/.env.local`（chmod 600），不写进单元文件：
+`server/.env.local`（chmod 600），不写进单元文件。
 
-```ini
-[Unit]
-Description=dsh-kb knowledge base backend
-After=network.target
+单元随仓库分发在 `deploy/systemd/dsh-kb.service.example`，拷过去改掉 checkout 路径就能用；
+文件头逐字段写清「必须改 / 可以改 / 为什么 `User=root` 只是起点」：
 
-[Service]
-WorkingDirectory=/root/workspace/plugins/dsh-kb/server
-Environment=KB_REPORTS_DIR=/root/workspace/kb-data/reports
-Environment=KB_DATA_DIR=/root/workspace/plugins/dsh-kb/server/data
-EnvironmentFile=-/root/workspace/plugins/dsh-kb/server/.env.local
-ExecStart=/root/workspace/plugins/dsh-kb/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8816
-Restart=on-failure
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
+```bash
+sudo cp deploy/systemd/dsh-kb.service.example /etc/systemd/system/dsh-kb.service
+# 若 checkout 不在 /opt/dsh/dsh-kb，改这份副本里的三处路径
+sudo systemctl daemon-reload
+sudo systemctl enable --now dsh-kb
+curl -s http://127.0.0.1:8816/healthz
 ```
 
-插件挂载由 Lead 用 `plugin_manager` 完成（安装/热挂载后刷新 DSH 页面，侧栏出现
-「知识库」，顺序在「Automation tasks」之后、「紫微斗数」之前）：
+数据默认落在 `<checkout>/server/data`（`kb.sqlite`、`models/`、`hf-cache/` 都在里面），
+所以单元里不必再设 `KB_REPORTS_DIR`；要挪数据再取消模板里 `KB_DATA_DIR` /
+`KB_REPORTS_DIR` 两行的注释。
 
-```
-plugin_manager action=install_bundle target=/root/workspace/plugins/dsh-kb
+插件安装：`dsh plugin --profile web add <你的 checkout 路径>`（插件页「添加插件」等价，
+宿主内也可用 `plugin_manager action=install_bundle target=<你的 checkout 路径>`）。装完
+刷新 DSH 页面，侧栏出现「知识库」，顺序在「Automation tasks」之后、「紫微斗数」之前：
+
+```bash
+dsh plugin --profile web add <你的 checkout 路径>
 ```
 
 host 半默认反代 `127.0.0.1:8816`；如需临时指向其它端口，可设
@@ -458,7 +467,7 @@ host 半默认反代 `127.0.0.1:8816`；如需临时指向其它端口，可设
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `KB_REPORTS_DIR` | `/root/workspace/kb-data/reports` | 报告根目录（只读） |
+| `KB_REPORTS_DIR` | `<checkout>/server/data/reports` | 报告扫描根（只读） |
 | `KB_DATA_DIR` | `server/data` | 索引库目录；`kb.sqlite` / `digest.json` / `models/` 都在这里 |
 | `KB_AI_URL` | `http://127.0.0.1:3080/kb/_internal/ai` | host 插件的内部 AI 桥（调 DSH 默认模型） |
 | `KB_AI_SECRET_FILE` | `server/.ai-secret` | 桥共享密钥（host 半首次加载自动生成，0600；缺失时 AI 优雅关闭） |
@@ -542,7 +551,7 @@ iframe 内使用 `/kb/` 这一套。
 
 实现注意：
 
-- 抓取脚本用固定临时路径（`/tmp/wx_article.html`、`/root/zh_pick/`、`/tmp/dsh-res/xhs_*`），
+- 抓取脚本用固定临时路径（`/tmp/wx_article.html`、`~/zh_pick/`、`/tmp/dsh-res/xhs_*`），
   所以 `kb_clip.py` 用模块级锁串行执行，避免并发互相覆盖。
 - 一次最多贴 5 条链接（`MAX_URLS`），单次请求整体 120s 上限；失败的条目单独返回原因，不影响其它条目。
 - 重复剪同一个链接会覆盖旧文件（按 URL 的 sha1 前 6 位匹配），不会堆重复。
@@ -561,12 +570,12 @@ iframe 内使用 `/kb/` 这一套。
 
 ```bash
 # 单元/接口测试（自带临时 reports + 临时索引库，不碰生产数据）
-cd /root/workspace/plugins/dsh-kb/server
+cd <checkout>/server
 ../.venv/bin/python -m pytest        # 68 passed
 ../.venv/bin/python -m app.cli_eval  # 检索评测（lexical / hybrid / hybrid+ppr）
 
 # 端到端验收
-cd /root/workspace/plugins/dsh-kb/verification
+cd <checkout>/verification
 node verify-app.mjs      # 后端 + 页面端到端（Playwright 直连 http://127.0.0.1:8916）
 node verify-proxy.mjs    # host 半（lib/index.js）隔离验收，不需要装进 DSH
 ```
